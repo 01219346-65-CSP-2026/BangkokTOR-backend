@@ -1,0 +1,8 @@
+services:
+  backend:
+    build: .
+    ports:
+      - "8003:8003"
+    environment:
+      PORT: 8003
+    restart: unless-stopped
