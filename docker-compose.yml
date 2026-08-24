@@ -5,4 +5,28 @@ services:
       - "8003:8003"
     environment:
       PORT: 8003
+      MONGODB_URI: mongodb://mongo:27017
+      MONGODB_DB_NAME: ${MONGODB_DB_NAME:-bangkoktor}
+    depends_on:
+      mongo:
+        condition: service_healthy
     restart: unless-stopped
+
+  mongo:
+    image: mongo:7
+    ports:
+      # Loopback-only so `bun run dev` on the host can reach it without
+      # exposing the DB on the deploy server's public interface.
+      - "127.0.0.1:27017:27017"
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+
+volumes:
+  mongo-data:
