@@ -1,0 +1,4 @@
+preload = ["./src/bun-shims.ts"]
+
+[test]
+preload = ["./src/bun-shims.ts"]

@@ -1,7 +1,13 @@
 import mongoose from "mongoose";
 import { env, isProduction } from "../config/env.ts";
 
-const READY_STATES = ["disconnected", "connected", "connecting", "disconnecting"] as const;
+const READY_STATES = {
+  0: "disconnected",
+  1: "connected",
+  2: "connecting",
+  3: "disconnecting",
+  99: "uninitialized",
+} as const satisfies Record<mongoose.ConnectionStates, string>;
 
 export async function connectMongo(): Promise<typeof mongoose> {
   mongoose.set("strictQuery", true);
@@ -29,8 +35,8 @@ export async function disconnectMongo(): Promise<void> {
   await mongoose.disconnect();
 }
 
-export function mongoState(): (typeof READY_STATES)[number] | "unknown" {
-  return READY_STATES[mongoose.connection.readyState] ?? "unknown";
+export function mongoState(): (typeof READY_STATES)[keyof typeof READY_STATES] {
+  return READY_STATES[mongoose.connection.readyState];
 }
 
 /** Round-trips a ping to the server — proves the connection actually works. */
