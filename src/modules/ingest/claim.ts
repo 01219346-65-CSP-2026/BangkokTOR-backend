@@ -47,7 +47,7 @@ type OutCome =
 type QueueRow = {
     _id: string,
     projectId: string,
-    status: string,
+    status: "pending" | "working" | "done" | "failed",
     claimedBy: string,
     claimedAt: Date,
     attempts: number,
