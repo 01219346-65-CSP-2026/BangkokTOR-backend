@@ -7,7 +7,8 @@
     "dev": "bun run --watch index.ts",
     "start": "bun run index.ts",
     "worker": "bun run src/worker.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
   },
   "devDependencies": {
     "@types/bun": "latest",
