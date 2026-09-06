@@ -162,7 +162,21 @@ export function nextSlot(host: string, delayMs: number): Promise<void> {
 //     Also: a date in the past would give you a negative wait — clamp it.
 // ═════════════════════════════════════════════════════════════════════════════
 
-// ...write chunk 3 here, then typecheck.
+function backoffMs(attempt: number, baseMs: number): number {
+  return Math.min(baseMs * 2 ** attempt, 30_000)
+}
+
+function retryAfterMs(response: Response): number | undefined {
+  const header = response.headers.get("retry-after");
+  if (!header) return undefined;
+
+  const seconds = Number(header);
+  if (Number.isFinite(seconds)) return Math.min(seconds * 1000, 60_000);
+
+  const date = Date.parse(header);
+  if (Number.isNaN(date)) return undefined;
+  return Math.min(Math.max(date - Date.now(), 0), 60_000);
+}
 
 // ═════════════════════════════════════════════════════════════════════════════
 // CHUNK 4 — politeFetch. The loop that uses everything above.
@@ -231,4 +245,55 @@ export function nextSlot(host: string, delayMs: number): Promise<void> {
 // }
 // ═════════════════════════════════════════════════════════════════════════════
 
-// ...write chunk 4 here, then typecheck, then tell me and I'll review.
+export async function politeFetch(
+  url: string,
+  init: RequestInit = {},
+  options: PoliteOptions = {},
+): Promise<Response> {
+  const delayMs = options.delayMs ?? env.httpDelayMs;
+  const timeoutMs = options.timeoutMs ?? env.httpTimeoutMs;
+  const maxAttempts = options.maxAttempts ?? env.httpMaxAttempts;
+
+  const host = new URL(url).host;
+  let lastError: HttpError | NetworkError | undefined
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    await nextSlot(host, delayMs);
+
+    // Self abort after timeoutMs
+    const signals = [AbortSignal.timeout(timeoutMs)]
+    if (init.signal) signals.push(init.signal);
+
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        ...init,
+        signal: AbortSignal.any(signals),
+        headers: {
+          "User-Agent": env.httpUserAgent,
+          ...init.headers
+        }
+      })
+    } catch (cause) {
+      if (init.signal?.aborted) throw cause;
+      lastError = new NetworkError(url, cause)
+      if (attempt < maxAttempts) {
+        await sleep(backoffMs(attempt, delayMs));
+        continue;
+      }
+      throw lastError;
+    }
+    if (response.ok) return response;
+
+    const body = await response.text().catch(() => "");
+    lastError = new HttpError(response.status, url, body);
+
+    if (!lastError.retryable || attempt === maxAttempts) throw lastError;
+
+    const after = retryAfterMs(response);
+    await sleep(after ?? backoffMs(attempt, delayMs));  
+  }
+
+  // Unreachable: the loop either returns or throws. Here for the type checker.
+  throw lastError ?? new NetworkError(url, "no attempts made");
+}
