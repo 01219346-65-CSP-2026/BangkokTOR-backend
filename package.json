@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "bun run --watch index.ts",
     "start": "bun run index.ts",
+    "worker": "bun run src/worker.ts",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {

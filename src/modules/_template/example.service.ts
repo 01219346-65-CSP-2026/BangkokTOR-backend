@@ -1,4 +1,5 @@
-import { isValidObjectId, type FilterQuery } from "mongoose";
+// Mongoose 9 renamed FilterQuery -> QueryFilter.
+import { isValidObjectId, type QueryFilter } from "mongoose";
 import { HttpError } from "../../middleware/errors.ts";
 import { ExampleModel, type Example, type ExampleLean } from "./example.model.ts";
 import type {
@@ -43,7 +44,7 @@ function isDuplicateKey(err: unknown): boolean {
 }
 
 export async function listExamples(query: ListExamplesQuery): Promise<PagedExamples> {
-  const filter: FilterQuery<Example> = {};
+  const filter: QueryFilter<Example> = {};
   if (query.tag) filter.tags = query.tag;
   if (query.published !== undefined) filter.isPublished = query.published;
   if (query.search) filter.$text = { $search: query.search };
