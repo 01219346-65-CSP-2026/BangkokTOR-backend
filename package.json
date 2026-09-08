@@ -8,7 +8,8 @@
     "start": "bun run index.ts",
     "worker": "bun run src/worker.ts",
     "typecheck": "tsc --noEmit",
-    "test": "bun test"
+    "test": "bun test",
+    "extract-worker": "bun run src/extract-worker.ts"
   },
   "devDependencies": {
     "@types/bun": "latest",
