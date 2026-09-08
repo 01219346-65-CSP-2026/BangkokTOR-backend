@@ -18,6 +18,7 @@
     "typescript": "^5"
   },
   "dependencies": {
+    "@opendataloader/pdf": "^2.5.7",
     "express": "^5.2.1",
     "mongoose": "^9.9.3"
   }

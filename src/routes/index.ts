@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { healthRouter } from "./health.route.ts";
+import { ingestRouter } from "../modules/ingest/ingest.route.ts";
 
 export const routes = Router();
 
@@ -8,4 +9,4 @@ routes.get("/", (_req, res) => {
 });
 
 routes.use(healthRouter);
-// Mount feature routers here, e.g. routes.use("/tours", toursRouter);
+routes.use("/api/ingest", ingestRouter);
