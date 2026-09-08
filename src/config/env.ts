@@ -20,7 +20,8 @@ export const env = {
   httpDelayMs: Number(process.env.HTTP_DELAY_MS ?? 400),
   httpTimeoutMs: Number(process.env.HTTP_TIMEOUT_MS ?? 30_000),
   httpMaxAttempts: Number(process.env.HTTP_MAX_ATTEMPTS ?? 4),
-  workerMaxAttempts: 5
+  workerMaxAttempts: 5,
+  datagothKey: process.env.DATAGOTH_KEY ?? ""
 } as const;
 
 export const isProduction = env.nodeEnv === "production";

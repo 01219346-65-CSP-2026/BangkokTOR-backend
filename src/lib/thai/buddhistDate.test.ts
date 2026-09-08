@@ -21,6 +21,12 @@ describe("beToCe", () => {
   test("NaN in, NaN out", () => {
     expect(beToCe(NaN)).toBeNaN();
   });
+
+  // CKAN drops the century: "67" is 2567 BE, not the year 67.
+  test("expands a 2-digit BE year", () => {
+    expect(beToCe(67)).toBe(2024);
+    expect(beToCe(68)).toBe(2025);
+  });
 });
 
 describe("ceToBe", () => {
@@ -78,6 +84,44 @@ describe("parseThaiDate", () => {
   test("rejects junk and empty input", () => {
     expect(parseThaiDate("not a date")).toBeUndefined();
     expect(parseThaiDate("")).toBeUndefined();
+  });
+
+  // The ONLY shape the CKAN gateway ships — verified over 300 live rows on
+  // 2026-09-08: a Thai month abbreviation with a 2-digit BE year, never digits.
+  describe("Thai month abbreviation + 2-digit BE year", () => {
+    test("parses the live format", () => {
+      // 67 -> 2567 BE -> 2024 CE
+      expect(parseThaiDate("21 มิ.ย. 67")?.toISOString()).toBe("2024-06-21T00:00:00.000Z");
+      expect(parseThaiDate("12 ธ.ค. 67")?.toISOString()).toBe("2024-12-12T00:00:00.000Z");
+    });
+
+    // All twelve appear in the resource; a missing one silently nulls a date.
+    test("resolves every month token seen in the resource", () => {
+      const expected: Array<[string, string]> = [
+        ["1 ม.ค. 68", "2025-01-01"], ["1 ก.พ. 68", "2025-02-01"],
+        ["1 มี.ค. 68", "2025-03-01"], ["1 เม.ย. 68", "2025-04-01"],
+        ["1 พ.ค. 68", "2025-05-01"], ["1 มิ.ย. 68", "2025-06-01"],
+        ["1 ก.ค. 68", "2025-07-01"], ["1 ส.ค. 68", "2025-08-01"],
+        ["1 ก.ย. 68", "2025-09-01"], ["1 ต.ค. 68", "2025-10-01"],
+        ["1 พ.ย. 68", "2025-11-01"], ["1 ธ.ค. 68", "2025-12-01"],
+      ];
+      for (const [input, iso] of expected) {
+        expect(parseThaiDate(input)?.toISOString()).toBe(`${iso}T00:00:00.000Z`);
+      }
+    });
+
+    test("accepts a spelled-out month", () => {
+      expect(parseThaiDate("21 มิถุนายน 2567")?.toISOString()).toBe("2024-06-21T00:00:00.000Z");
+    });
+
+    test("covers the resource's full year span (64-68 BE)", () => {
+      expect(parseThaiDate("1 ม.ค. 64")?.getUTCFullYear()).toBe(2021);
+      expect(parseThaiDate("1 ม.ค. 68")?.getUTCFullYear()).toBe(2025);
+    });
+
+    test("rejects an unknown month token rather than guessing", () => {
+      expect(parseThaiDate("21 xx 67")).toBeUndefined();
+    });
   });
 });
 
