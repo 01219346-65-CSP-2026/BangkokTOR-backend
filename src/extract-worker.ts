@@ -15,6 +15,7 @@ import { recordError } from "./modules/ingest/ingest.service.ts";
 
 const runner = createRunner<ExtractionDoc>({
   name: "extract-worker",
+  kind: "extract",
   model: ExtractionQueueModel,
   process: (row) =>
     processBundle({

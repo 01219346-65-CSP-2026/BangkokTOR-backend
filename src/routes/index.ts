@@ -4,6 +4,7 @@ import { ingestRouter } from "../modules/ingest/ingest.route.ts";
 import { extractRouter } from "../modules/extract/extract.route.ts";
 import { gradeRouter } from "../modules/grade/grade.route.ts";
 import { torRouter } from "../modules/tor/tor.route.ts";
+import { monitorRouter } from "../modules/monitor/monitor.route.ts";
 
 export const routes = Router();
 
@@ -16,3 +17,4 @@ routes.use("/api/ingest", ingestRouter);
 routes.use("/api/extract", extractRouter);
 routes.use("/api/grade", gradeRouter);
 routes.use("/api/tors", torRouter);
+routes.use("/api/pipeline", monitorRouter);

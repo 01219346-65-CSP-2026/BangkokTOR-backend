@@ -13,6 +13,7 @@ import { QueueModel, type QueueDoc } from "./modules/ingest/queue.model.ts";
 
 const runner = createRunner<QueueDoc>({
   name: "ingest-worker",
+  kind: "ingest",
   model: QueueModel,
   process: (row) => processRow(row),
   label: (row) => row.projectId,

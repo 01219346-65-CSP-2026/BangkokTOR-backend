@@ -2,6 +2,7 @@ import { env } from "./config/env.ts";
 import { connectMongo, disconnectMongo } from "./db/mongo.ts";
 import { findUngraded, gradeTor } from "./modules/grade/grade.service.ts";
 import { recordError } from "./modules/ingest/ingest.service.ts";
+import { beat, startBeating, workerId } from "./modules/monitor/heartbeat.service.ts";
 
 // The grading worker (stage ⑥): stored chunks -> rule findings -> a grade.
 //
@@ -21,57 +22,103 @@ import { recordError } from "./modules/ingest/ingest.service.ts";
 let running = true;
 let inFlight = false;
 
+// Heartbeat state. This worker has no queue rows, so the heartbeat is the ONLY
+// evidence it exists — the dashboard cannot fall back to reading claimedBy the
+// way it can for the other two.
+const id = workerId();
+let graded = 0;
+let failed = 0;
+let state: "idle" | "working" | "stopping" = "idle";
+let currentLabel: string | null = null;
+let currentSince: Date | null = null;
+
+const snapshot = () => ({
+  id,
+  kind: "grade" as const,
+  state,
+  currentLabel,
+  currentSince,
+  processedThisRun: graded,
+  failedThisRun: failed,
+});
+
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 async function loop() {
   console.log(`grade-worker started (provider ${env.aiProvider}, model ${env.ollamaModel})`);
 
-  let graded = 0;
-  let failed = 0;
   let idleLogged = false;
 
-  while (running) {
-    // One at a time: grading is minutes long, and a batch would only widen the
-    // window in which a shutdown loses work.
-    const [tor] = await findUngraded(1);
+  await beat(snapshot());
+  // Grading a single TOR takes 1-3 minutes, so without a ticking beat a
+  // perfectly healthy worker would look dead for most of every job.
+  const stopBeating = startBeating(snapshot, env.heartbeatMs);
 
-    if (!tor) {
-      if (!idleLogged) {
-        console.log("nothing to grade — waiting");
-        idleLogged = true;
+  try {
+    while (running) {
+      // One at a time: grading is minutes long, and a batch would only widen the
+      // window in which a shutdown loses work.
+      const [tor] = await findUngraded(1);
+
+      if (!tor) {
+        if (!idleLogged) {
+          console.log("nothing to grade — waiting");
+          idleLogged = true;
+        }
+        state = "idle";
+        currentLabel = null;
+        currentSince = null;
+        await sleep(env.workerIdleMs);
+        continue;
       }
-      await sleep(env.workerIdleMs);
-      continue;
-    }
 
-    idleLogged = false;
-    inFlight = true;
-    const started = Date.now();
+      idleLogged = false;
+      inFlight = true;
+      state = "working";
+      currentLabel = tor.projectId;
+      currentSince = new Date();
+      await beat(snapshot());
+      const started = Date.now();
 
-    try {
-      const result = await gradeTor(tor._id);
-      const elapsed = ((Date.now() - started) / 1000).toFixed(0);
+      try {
+        const result = await gradeTor(tor._id);
+        const elapsed = ((Date.now() - started) / 1000).toFixed(0);
 
-      if (result.ok) {
-        graded++;
-        console.log(`ok   ${tor.projectId}  grade ${result.grade}  ${elapsed}s  (${graded} graded)`);
-      } else {
+        if (result.ok) {
+          graded++;
+          console.log(
+            `ok   ${tor.projectId}  grade ${result.grade}  ${elapsed}s  (${graded} graded)`,
+          );
+        } else {
+          failed++;
+          // gradeTor already moved the TOR off extraction_pending for the cases
+          // it can diagnose (no-chunks), so this will not spin on the same row.
+          console.log(`fail ${tor.projectId}  ${result.reason}  ${elapsed}s`);
+        }
+      } catch (error) {
         failed++;
-        // gradeTor already moved the TOR off extraction_pending for the cases
-        // it can diagnose (no-chunks), so this will not spin on the same row.
-        console.log(`fail ${tor.projectId}  ${result.reason}  ${elapsed}s`);
+        await recordError({
+          projectId: tor.projectId,
+          kind: "grade-worker-threw",
+          message: String(error),
+        });
+        console.error(`throw ${tor.projectId}:`, error);
+      } finally {
+        inFlight = false;
+        // Do not clobber "stopping" — see runQueue.ts for the same guard.
+        if (running) state = "idle";
+        currentLabel = null;
+        currentSince = null;
+        await beat(snapshot());
       }
-    } catch (error) {
-      failed++;
-      await recordError({
-        projectId: tor.projectId,
-        kind: "grade-worker-threw",
-        message: String(error),
-      });
-      console.error(`throw ${tor.projectId}:`, error);
-    } finally {
-      inFlight = false;
     }
+  } finally {
+    stopBeating();
+    // Last word: this process is leaving, not idling.
+    state = "stopping";
+    currentLabel = null;
+    currentSince = null;
+    await beat(snapshot());
   }
 
   console.log(`grade-worker stopped — ${graded} graded, ${failed} failed`);
@@ -83,6 +130,8 @@ async function loop() {
 async function shutdown(signal: string) {
   console.log(`\n${signal} — finishing current TOR, then stopping`);
   running = false;
+  state = "stopping";
+  await beat(snapshot());
 
   const deadline = Date.now() + 240_000;
   while (inFlight && Date.now() < deadline) await sleep(500);

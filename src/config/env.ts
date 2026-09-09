@@ -32,6 +32,18 @@ export const env = {
   workerLeaseMs: Number(process.env.WORKER_LEASE_MS ?? 900_000),
   workerIdleMs: Number(process.env.WORKER_IDLE_MS ?? 5_000),
   workerMaxAttempts: Number(process.env.WORKER_MAX_ATTEMPTS ?? 3),
+
+  // How often a worker says it is still alive. The monitor calls a worker stale
+  // at 3 missed beats, so this also sets how fast a death is noticed.
+  heartbeatMs: Number(process.env.HEARTBEAT_MS ?? 5_000),
+
+  // Browsers send no credentials to these routes, but an allowlist is still the
+  // right default: the API has no auth, so any origin that can call it can read
+  // the whole pipeline. Comma-separated.
+  corsOrigins: (process.env.CORS_ORIGINS ?? "http://localhost:3003")
+    .split(",")
+    .map((o) => o.trim())
+    .filter(Boolean),
   // Verified bundles reach 512,452,129 bytes. Anything past this is recorded
   // as oversize rather than filling the disk.
   maxBundleBytes: Number(process.env.MAX_BUNDLE_BYTES ?? 200_000_000),
