@@ -16,11 +16,17 @@ export const TOR_STATUS_IDS = [
   "inProgress", "contracted", "deliveredOnTime", "deliveredComplete",
 ] as const;
 
+export const TOR_GRADES = ["A", "B", "C"] as const;
+export const GRADE_PHASES = ["legitimacy", "fairness"] as const;
+/** Bump when weights or prompts change — see graderVersion on the schema. */
+export const GRADER_VERSION = 1;
+
 export const TOR_STATUSES = [
   "discovered",
   "documents_fetched",
   "extraction_pending",
   "extraction_incomplete",
+  "graded",
   "published",
   "error",
 ] as const;
@@ -85,6 +91,39 @@ const torSchema = new Schema(
     legitimacySignals: { type: [String], default: [] },
     legitimacyCheckedAt: { type: Date, default: null },
 
+    // ── Grading (steps 5-7). Stored in full; the public API never emits it.
+    // AGENTS.md 1 / FR-19 forbids an accusatory shape, and "Grade C" on a named
+    // agency is exactly that. tor.service.ts serialize() is the gate.
+    grade: { type: String, enum: TOR_GRADES, default: null },
+    gradeScore: { type: Number, default: null },
+    gradePhaseFailed: { type: String, enum: GRADE_PHASES, default: null },
+    // One entry per rule in the rulebook, including the ones that did NOT fire
+    // and the ones nothing checked — a grade is only auditable if the misses
+    // are recorded too.
+    ruleFindings: {
+      type: [
+        {
+          _id: false,
+          code: String,
+          fired: Boolean,
+          weight: Number,
+          phase: String,
+          // Verbatim quote from the document. Enforced at write time: a fired
+          // finding without one is rejected, not stored.
+          evidence: { type: String, default: "" },
+          checked: { type: Boolean, default: true },
+          chunkIndex: { type: Number, default: null },
+        },
+      ],
+      default: [],
+    },
+    gradedAt: { type: Date, default: null },
+    // Bump when weights or prompts change, so stale grades are findable.
+    graderVersion: { type: Number, default: null },
+    // Which model produced this, e.g. "ollama:qwen2.5:7b". When Vertex replaces
+    // Ollama this is how you know which rows to regrade.
+    graderModel: { type: String, default: null },
+
     status: { type: String, enum: TOR_STATUSES, default: "discovered", required: true },
     statusReason: { type: String, default: null },
 
@@ -102,6 +141,8 @@ torSchema.index({ budget: -1 });
 torSchema.index({ status: 1, isSoftware: 1 });
 // The dashboard's main filter: software tenders, by category.
 torSchema.index({ category: 1, isSoftware: 1 });
+// Finding rows to (re)grade: ungraded ones, and ones graded by an old version.
+torSchema.index({ status: 1, graderVersion: 1 });
 
 export type Tor = InferSchemaType<typeof torSchema>;
 export type TorDoc = HydratedDocument<Tor>;
