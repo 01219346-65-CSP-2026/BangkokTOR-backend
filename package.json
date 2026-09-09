@@ -9,7 +9,8 @@
     "worker": "bun run src/worker.ts",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
-    "extract-worker": "bun run src/extract-worker.ts"
+    "extract-worker": "bun run src/extract-worker.ts",
+    "grade-worker": "bun run src/grade-worker.ts"
   },
   "devDependencies": {
     "@types/bun": "latest",
