@@ -6,12 +6,11 @@ import { type PageResult } from "../../shared/utils/PageResult.ts";
 import { type ListQuery } from "../../shared/utils/ListQuery.ts";
 
 
-// I just copied pagination from the example template;
-
-type ThingSortField = "";
+type ThingSortField = "title"; // query sort fields
 export type PagedThings = PageResult<ThingJSON>;
 export type ListThingsQuery = ListQuery<ThingSortField> & {
-  //title?: string;
+  // query filter fields
+  title?: string;
 };
 
 function serialize(doc: ThingLean): ThingJSON {
@@ -22,14 +21,18 @@ function serialize(doc: ThingLean): ThingJSON {
 // ==================================
 
 export async function listThings(query: ListThingsQuery): Promise<PagedThings> {
+  const page = Math.max(1, Number(query.page ?? 1) || 1);
+  const limit = Math.min(100, Math.max(1, Number(query.limit ?? 20) || 20));
+
   const filter: FilterQuery<Thing> = {};
-  // add query to filter here
+  // add query filter fields to filter here
+  if (query.title) filter.title = query.title;
 
   const [docs, total] = await Promise.all([
     ThingModel.find(filter)
       .sort(query.sort)
-      .skip((query.page - 1) * query.limit)
-      .limit(query.limit)
+      .skip((page - 1) * limit)
+      .limit(limit)
       .lean<ThingLean[]>()
       .exec(),
     ThingModel.countDocuments(filter).exec(),
@@ -38,9 +41,9 @@ export async function listThings(query: ListThingsQuery): Promise<PagedThings> {
   return {
     items: docs.map(serialize),
     total,
-    page: query.page,
-    limit: query.limit,
-    pages: Math.ceil(total / query.limit),
+    page: page,
+    limit: limit,
+    pages: Math.ceil(total / limit),
   };
 }
 

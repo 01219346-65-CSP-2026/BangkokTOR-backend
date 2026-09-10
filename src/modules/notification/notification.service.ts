@@ -6,9 +6,12 @@ import { type PageResult } from "../../shared/utils/PageResult.ts";
 import { type ListQuery } from "../../shared/utils/ListQuery.ts";
 
 
-type NotificationSortField = "";
+type NotificationSortField = ""; // query sort fields
 export type PagedNotifications = PageResult<NotificationJSON>;
 export type ListNotificationsQuery = ListQuery<NotificationSortField> & {
+  // query filter fields
+  user_id?: string,
+  tor_id?: string
 };
 
 function serialize(doc: NotificationLean): NotificationJSON {
@@ -19,14 +22,25 @@ function serialize(doc: NotificationLean): NotificationJSON {
 // ==================================
 
 export async function listNotifications(query: ListNotificationsQuery): Promise<PagedNotifications> {
+  const page = Math.max(1, Number(query.page ?? 1) || 1);
+  const limit = Math.min(100, Math.max(1, Number(query.limit ?? 20) || 20));
+
   const filter: FilterQuery<Notification> = {};
-  // add query to filter here
+  // add query filter fields to filter here
+  if (query.user_id) {
+    assertValidId(query.user_id);
+    filter.user_id = query.user_id;
+  }
+  if (query.tor_id) {
+    assertValidId(query.tor_id);
+    filter.tor_id = query.tor_id;
+  }
 
   const [docs, total] = await Promise.all([
     NotificationModel.find(filter)
       .sort(query.sort)
-      .skip((query.page - 1) * query.limit)
-      .limit(query.limit)
+      .skip((page - 1) * limit)
+      .limit(limit)
       .lean<NotificationLean[]>()
       .exec(),
     NotificationModel.countDocuments(filter).exec(),
@@ -35,9 +49,9 @@ export async function listNotifications(query: ListNotificationsQuery): Promise<
   return {
     items: docs.map(serialize),
     total,
-    page: query.page,
-    limit: query.limit,
-    pages: Math.ceil(total / query.limit),
+    page: page,
+    limit: limit,
+    pages: Math.ceil(total / limit),
   };
 }
 

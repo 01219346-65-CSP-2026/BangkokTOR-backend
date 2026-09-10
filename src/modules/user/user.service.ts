@@ -6,9 +6,10 @@ import { type PageResult } from "../../shared/utils/PageResult.ts";
 import { type ListQuery } from "../../shared/utils/ListQuery.ts";
 
 
-type UserSortField = "";
+type UserSortField = ""; // query sort fields
 export type PagedUsers = PageResult<UserJSON>;
 export type ListUsersQuery = ListQuery<UserSortField> & {
+  // query filter fields
 };
 
 function serialize(doc: UserLean): UserJSON {
@@ -19,14 +20,17 @@ function serialize(doc: UserLean): UserJSON {
 // ==================================
 
 export async function listUsers(query: ListUsersQuery): Promise<PagedUsers> {
+  const page = Math.max(1, Number(query.page ?? 1) || 1);
+  const limit = Math.min(100, Math.max(1, Number(query.limit ?? 20) || 20));
+
   const filter: FilterQuery<User> = {};
-  // add query to filter here
+  // add query filter fields to filter here
 
   const [docs, total] = await Promise.all([
     UserModel.find(filter)
       .sort(query.sort)
-      .skip((query.page - 1) * query.limit)
-      .limit(query.limit)
+      .skip((page - 1) * limit)
+      .limit(limit)
       .lean<UserLean[]>()
       .exec(),
     UserModel.countDocuments(filter).exec(),
@@ -35,9 +39,9 @@ export async function listUsers(query: ListUsersQuery): Promise<PagedUsers> {
   return {
     items: docs.map(serialize),
     total,
-    page: query.page,
-    limit: query.limit,
-    pages: Math.ceil(total / query.limit),
+    page: page,
+    limit: limit,
+    pages: Math.ceil(total / limit),
   };
 }
 

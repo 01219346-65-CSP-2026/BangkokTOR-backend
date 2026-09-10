@@ -6,9 +6,12 @@ import { type PageResult } from "../../shared/utils/PageResult.ts";
 import { type ListQuery } from "../../shared/utils/ListQuery.ts";
 
 
-type TechstackSortField = "";
+type TechstackSortField = ""; // query sort fields
 export type PagedTechstacks = PageResult<TechstackJSON>;
 export type ListTechstacksQuery = ListQuery<TechstackSortField> & {
+  // query filter fields
+  user_id?: string,
+  tor_id?: string
 };
 
 function serialize(doc: TechstackLean): TechstackJSON {
@@ -19,14 +22,25 @@ function serialize(doc: TechstackLean): TechstackJSON {
 // ==================================
 
 export async function listTechstacks(query: ListTechstacksQuery): Promise<PagedTechstacks> {
+  const page = Math.max(1, Number(query.page ?? 1) || 1);
+  const limit = Math.min(100, Math.max(1, Number(query.limit ?? 20) || 20));
+
   const filter: FilterQuery<Techstack> = {};
-  // add query to filter here
+  // add query filter fields to filter here
+  if (query.user_id) {
+    assertValidId(query.user_id);
+    filter.user_id = query.user_id;
+  }
+  if (query.tor_id) {
+    assertValidId(query.tor_id);
+    filter.tor_id = query.tor_id;
+  }
 
   const [docs, total] = await Promise.all([
     TechstackModel.find(filter)
       .sort(query.sort)
-      .skip((query.page - 1) * query.limit)
-      .limit(query.limit)
+      .skip((page - 1) * limit)
+      .limit(limit)
       .lean<TechstackLean[]>()
       .exec(),
     TechstackModel.countDocuments(filter).exec(),
@@ -35,9 +49,9 @@ export async function listTechstacks(query: ListTechstacksQuery): Promise<PagedT
   return {
     items: docs.map(serialize),
     total,
-    page: query.page,
-    limit: query.limit,
-    pages: Math.ceil(total / query.limit),
+    page: page,
+    limit: limit,
+    pages: Math.ceil(total / limit),
   };
 }
 
