@@ -6,7 +6,11 @@
   "scripts": {
     "dev": "bun run --watch index.ts",
     "start": "bun run index.ts",
-    "typecheck": "tsc --noEmit"
+    "worker": "bun run src/worker.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "extract-worker": "bun run src/extract-worker.ts",
+    "grade-worker": "bun run src/grade-worker.ts"
   },
   "devDependencies": {
     "@types/bun": "latest",
@@ -16,6 +20,7 @@
     "typescript": "^5"
   },
   "dependencies": {
+    "@opendataloader/pdf": "^2.5.7",
     "express": "^5.2.1",
     "mongoose": "^9.9.4"
   }

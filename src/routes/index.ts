@@ -5,6 +5,11 @@ import { thingRouter } from "../modules/_thing/thing.route.ts";
 import { notificationRouter } from "../modules/notification/notification.route.ts";
 import { techstackRouter } from "../modules/techstack/techstack.route.ts";
 import { userRouter } from "../modules/user/user.route.ts";
+import { ingestRouter } from "../modules/ingest/ingest.route.ts";
+import { extractRouter } from "../modules/extract/extract.route.ts";
+import { gradeRouter } from "../modules/grade/grade.route.ts";
+import { torRouter } from "../modules/tor/tor.route.ts";
+import { monitorRouter } from "../modules/monitor/monitor.route.ts";
 
 export const routes = Router();
 
@@ -21,3 +26,8 @@ routes.use(healthRouter);
 routes.use("/api/notification", notificationRouter);
 routes.use("/api/techstack", techstackRouter);
 routes.use("/api/user", userRouter);
+routes.use("/api/ingest", ingestRouter);
+routes.use("/api/extract", extractRouter);
+routes.use("/api/grade", gradeRouter);
+routes.use("/api/tors", torRouter);
+routes.use("/api/pipeline", monitorRouter);

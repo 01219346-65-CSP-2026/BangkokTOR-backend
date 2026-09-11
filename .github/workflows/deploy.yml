@@ -9,8 +9,9 @@ jobs:
   deploy:
     runs-on: self-hosted
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - name: Pull latest in prod checkout
+        run: git -C /Users/munyinsam/Prod/csp/BangkokTOR-backend pull --ff-only
 
       - name: Docker compose up
         run: docker compose up -d --build
+        working-directory: /Users/munyinsam/Prod/csp/BangkokTOR-backend
