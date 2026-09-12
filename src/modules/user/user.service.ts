@@ -1,16 +1,16 @@
-import { type FilterQuery } from "mongoose";
+import { type QueryFilter } from "mongoose";
 import { HttpError } from "../../middleware/errors.ts";
-import { UserModel, type User, type UserLean, type CreateUserInput, type UpdateUserInput, type UserJSON } from "./user.model.ts";
+import { UserModel, type User, type UserLean, type UserJSON } from "./user.model.ts";
 import { assertValidId } from "../../shared/utils/assertValidId.ts";
+import { isDuplicateKey } from "../../shared/utils/parse.ts";
 import { type PageResult } from "../../shared/utils/PageResult.ts";
-import { type ListQuery } from "../../shared/utils/ListQuery.ts";
+import type {
+  CreateUserBody,
+  ListUsersQuery,
+  UpdateUserBody,
+} from "./user.validation.ts";
 
-
-type UserSortField = ""; // query sort fields
 export type PagedUsers = PageResult<UserJSON>;
-export type ListUsersQuery = ListQuery<UserSortField> & {
-  // query filter fields
-};
 
 function serialize(doc: UserLean): UserJSON {
   const { _id, ...fields } = doc;
@@ -20,15 +20,15 @@ function serialize(doc: UserLean): UserJSON {
 // ==================================
 
 export async function listUsers(query: ListUsersQuery): Promise<PagedUsers> {
-  const page = Math.max(1, Number(query.page ?? 1) || 1);
-  const limit = Math.min(100, Math.max(1, Number(query.limit ?? 20) || 20));
+  const { page, limit, sort } = query;
 
-  const filter: FilterQuery<User> = {};
-  // add query filter fields to filter here
+  const filter: QueryFilter<User> = {};
+  if (query.email) filter.email = query.email;
+  if (query.role) filter.role = query.role;
 
   const [docs, total] = await Promise.all([
     UserModel.find(filter)
-      .sort(query.sort)
+      .sort(sort)
       .skip((page - 1) * limit)
       .limit(limit)
       .lean<UserLean[]>()
@@ -39,8 +39,8 @@ export async function listUsers(query: ListUsersQuery): Promise<PagedUsers> {
   return {
     items: docs.map(serialize),
     total,
-    page: page,
-    limit: limit,
+    page,
+    limit,
     pages: Math.ceil(total / limit),
   };
 }
@@ -54,17 +54,31 @@ export async function getUserById(id: string): Promise<UserJSON> {
   return serialize(doc);
 }
 
-export async function createUser(input: CreateUserInput): Promise<UserJSON> {
+export async function createUser(input: CreateUserBody): Promise<UserJSON> {
   try {
     const doc = await UserModel.create(input);
     return serialize(doc.toObject<UserLean>());
   } catch (err) {
+    // `email` and `google_id` are both unique. Without this branch the E11000
+    // misses the instanceof check in the error handler and a predictable
+    // conflict surfaces as "Internal server error".
+    if (isDuplicateKey(err)) {
+      throw new HttpError(409, `That email or Google account is already registered`);
+    }
     throw err;
   }
 }
 
-export async function updateUser(id: string, input: UpdateUserInput): Promise<UserJSON> {
+/**
+ * Note what this CANNOT change: `role`.
+ *
+ * `input` is a validated UpdateUserBody, and that type has no `role` key —
+ * see the note in user.validation.ts. Before that, `req.body` was spread
+ * straight into `$set`, so a caller could promote themselves to admin.
+ */
+export async function updateUser(id: string, input: UpdateUserBody): Promise<UserJSON> {
   assertValidId(id);
+
   try {
     const doc = await UserModel.findByIdAndUpdate(
       id,
@@ -77,6 +91,9 @@ export async function updateUser(id: string, input: UpdateUserInput): Promise<Us
     if (!doc) throw new HttpError(404, `${UserModel.modelName} not found: ${id}`);
     return serialize(doc);
   } catch (err) {
+    if (isDuplicateKey(err)) {
+      throw new HttpError(409, `That email is already registered`);
+    }
     throw err;
   }
 }

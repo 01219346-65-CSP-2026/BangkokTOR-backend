@@ -44,6 +44,19 @@ export const env = {
     .split(",")
     .map((o) => o.trim())
     .filter(Boolean),
+  // Shared secret for the routes that start pipeline work, write user data, or
+  // read the private grade. Not user auth — see middleware/adminToken.ts.
+  // Required in production; optional in dev so a local run needs no setup.
+  adminToken: process.env.ADMIN_TOKEN ?? "",
+
+  // Per-IP request ceilings. Reads are generous enough that normal browsing
+  // never notices; the `/run` endpoints are near-zero because each one costs
+  // minutes of GPU or network time.
+  rateLimitReadMax: Number(process.env.RATE_LIMIT_READ_MAX ?? 120),
+  rateLimitPipelineMax: Number(process.env.RATE_LIMIT_PIPELINE_MAX ?? 60),
+  rateLimitWriteMax: Number(process.env.RATE_LIMIT_WRITE_MAX ?? 20),
+  rateLimitRunMax: Number(process.env.RATE_LIMIT_RUN_MAX ?? 2),
+
   // Verified bundles reach 512,452,129 bytes. Anything past this is recorded
   // as oversize rather than filling the disk.
   maxBundleBytes: Number(process.env.MAX_BUNDLE_BYTES ?? 200_000_000),
@@ -60,6 +73,16 @@ export const env = {
 } as const;
 
 export const isProduction = env.nodeEnv === "production";
+
+// Fail at boot rather than silently serving the pipeline's trigger endpoints to
+// anyone who finds them. Dev is exempt so a fresh clone runs with no setup.
+export function assertServeConfig(): void {
+  if (isProduction && !env.adminToken) {
+    throw new Error(
+      "ADMIN_TOKEN is not set — the /run, write, and grade routes would be unprotected in production. See .env.example.",
+    );
+  }
+}
 
 // Ingestion needs the CKAN key; serving does not. Called at the start of a run
 // so the failure is one clear message, not a 403 sixteen pages in.

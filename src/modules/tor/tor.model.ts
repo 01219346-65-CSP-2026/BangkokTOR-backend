@@ -20,6 +20,10 @@ export const TOR_GRADES = ["A", "B", "C"] as const;
 export const GRADE_PHASES = ["legitimacy", "fairness"] as const;
 /** Bump when weights or prompts change — see graderVersion on the schema. */
 export const GRADER_VERSION = 1;
+/** Bump when the summary prompt or the FR-19 screen changes, so stale bullets
+ *  are findable. Separate from GRADER_VERSION: the prompt can be reworded
+ *  without the rulebook moving, and vice versa. */
+export const SUMMARY_VERSION = 1;
 
 export const TOR_STATUSES = [
   "discovered",
@@ -27,8 +31,9 @@ export const TOR_STATUSES = [
   "extraction_pending",
   "extraction_incomplete",
   "graded",
+  // Reserved for an editorial promotion step that does not exist yet: nothing
+  // writes this, and listTors reads it so the day it lands needs no migration.
   "published",
-  "error",
 ] as const;
 export type TorStatus = (typeof TOR_STATUSES)[number];
 
@@ -124,6 +129,29 @@ const torSchema = new Schema(
     // Ollama this is how you know which rows to regrade.
     graderModel: { type: String, default: null },
 
+    // ── Summary (step 8). Unlike the grade, this IS public — it is what the
+    // detail page shows where raw document chunks used to be.
+    //
+    // Which is why it is the one piece of model output that has to be built
+    // incapable of accusing anyone: a bullet is generated prose about a named
+    // government agency. lib/ai/summaryGuard.ts screens it, and the screen runs
+    // twice — once leaving the model, once before this field is written.
+    summaryBullets: {
+      type: [
+        {
+          _id: false,
+          text: String,
+          // Which chunk produced it, so the serializer can cite a filename and
+          // page range. A point a reader cannot check is worth less.
+          chunkIndex: { type: Number, default: null },
+        },
+      ],
+      default: [],
+    },
+    summarizedAt: { type: Date, default: null },
+    summaryVersion: { type: Number, default: null },
+    summaryModel: { type: String, default: null },
+
     status: { type: String, enum: TOR_STATUSES, default: "discovered", required: true },
     statusReason: { type: String, default: null },
 
@@ -143,6 +171,13 @@ torSchema.index({ status: 1, isSoftware: 1 });
 torSchema.index({ category: 1, isSoftware: 1 });
 // Finding rows to (re)grade: ungraded ones, and ones graded by an old version.
 torSchema.index({ status: 1, graderVersion: 1 });
+// The public list (tor.service.ts listTors) filters on status and sorts by
+// announcedAt on every request. With only the separate {status,isSoftware} and
+// {announcedAt:-1} indexes, Mongo can use one or the other — so it either
+// scanned, or sorted every matching TOR in memory and risked the 32MB sort
+// limit as the corpus grows. This compound serves filter, sort and pagination
+// as one index range scan.
+torSchema.index({ status: 1, announcedAt: -1 });
 
 export type Tor = InferSchemaType<typeof torSchema>;
 export type TorDoc = HydratedDocument<Tor>;
