@@ -1,5 +1,7 @@
 import { isValidObjectId, type QueryFilter } from "mongoose";
-import { serialize, serializeGrade } from "./tor.serialize.ts";
+import { ChunkModel } from "../extract/chunk.model.ts";
+import { DocumentModel } from "../ingest/document.model.ts";
+import { serialize, serializeDetail, serializeGrade } from "./tor.serialize.ts";
 import { TOR_CATEGORIES, TorModel, type Tor, type TorLean } from "./tor.model.ts";
 
 // Services return plain data (6). Every read that leaves this file has been
@@ -61,6 +63,20 @@ export async function getTor(id: string) {
   if (!isValidObjectId(id)) return null;
   const tor = await TorModel.findById(id).lean();
   return tor ? serialize(tor as TorLean) : null;
+}
+
+export async function getTorDetail(id: string) {
+  if (!isValidObjectId(id)) return null;
+
+  const tor = await TorModel.findById(id).lean();
+  if (!tor) return null;
+
+  const [documents, chunks] = await Promise.all([
+    DocumentModel.find({ torId: tor._id }).sort({ createdAt: 1 }).lean(),
+    ChunkModel.find({ torId: tor._id }).sort({ index: 1 }).lean(),
+  ]);
+
+  return serializeDetail(tor as TorLean, documents, chunks);
 }
 
 /** The full grade. Kept off the public shape deliberately — mount behind auth. */

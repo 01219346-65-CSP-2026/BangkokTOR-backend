@@ -1,15 +1,25 @@
 services:
   backend:
     build: .
-    ports:
-      - "8003:8003"
+    # No `ports:` on purpose. The API is reached only over the shared network,
+    # by the frontend container. Publishing 8003 to the host put an
+    # unauthenticated API on every interface of the deploy box; the router NAT
+    # was the only thing keeping it off the internet.
+    expose:
+      - "8003"
     environment:
       PORT: 8003
       MONGODB_URI: mongodb://mongo:27017
       MONGODB_DB_NAME: ${MONGODB_DB_NAME:-bangkoktor}
+      NODE_ENV: production
+      ADMIN_TOKEN: ${ADMIN_TOKEN:?ADMIN_TOKEN must be set in .env}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3003}
     depends_on:
       mongo:
         condition: service_healthy
+    networks:
+      - default
+      - bangkoktor
     restart: unless-stopped
 
   mongo:
@@ -30,3 +40,10 @@ services:
 
 volumes:
   mongo-data:
+
+networks:
+  # Mongo stays on `default` only — it is never reachable from the frontend or
+  # the proxy, which is the point of keeping two networks rather than one.
+  bangkoktor:
+    external: true
+    name: bangkoktor-net

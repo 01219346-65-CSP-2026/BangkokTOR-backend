@@ -13,7 +13,7 @@ export async function list(req: Request, res: Response) {
 }
 
 export async function detail(req: Request, res: Response) {
-  const tor = await service.getTor(param(req.params.id));
+  const tor = await service.getTorDetail(param(req.params.id));
   if (!tor) {
     res.status(404).json({ error: "not_found" });
     return;
