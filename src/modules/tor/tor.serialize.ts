@@ -1,3 +1,4 @@
+import { sanitizeBullets } from "../../lib/ai/summaryGuard.ts";
 import { ruleByCode } from "../../lib/grade/rules.ts";
 import type { IngestDocumentLean } from "../ingest/document.model.ts";
 import type { TorChunkLean } from "../extract/chunk.model.ts";
@@ -26,6 +27,15 @@ const PRIVATE_GRADE_FIELDS = [
   "ruleFindings",
   "graderVersion",
   "graderModel",
+  // Not private, but not raw either. serializeDetail re-publishes these as
+  // `summaryPoints` after screening them and attaching a page citation.
+  // Leaving the stored field in `...rest` shipped the unscreened text straight
+  // past the gate — caught by tor.serialize.test.ts, which is what that test
+  // is for.
+  "summaryBullets",
+  "summarizedAt",
+  "summaryVersion",
+  "summaryModel",
 ] as const;
 
 export type PublicSignal = {
@@ -69,18 +79,29 @@ export type PublicTorDocument = {
   fetchedAt: string | null;
 };
 
-export type PublicTorSection = {
+/**
+ * One summary point, with the page it came from.
+ *
+ * This replaced `extractedSections`, which shipped the raw PDF chunks — up to
+ * 24 of them at ~6,000 characters. The PDF is linked from `documents`, so a
+ * reader who wants the source text has it; what the record owes them here is
+ * the gist. It also takes a ~144 KB worst case off the detail response.
+ *
+ * `filename` is null when the bullet's chunk can no longer be resolved, which
+ * happens if chunks were re-extracted after the summary was written. The point
+ * is still true, it just cannot be cited.
+ */
+export type PublicTorSummaryPoint = {
   id: string;
-  heading: string;
   text: string;
-  filename: string;
+  filename: string | null;
   pageStart: number;
   pageEnd: number;
 };
 
 export type PublicTorDetail = PublicTor & {
   documents: PublicTorDocument[];
-  extractedSections: PublicTorSection[];
+  summaryPoints: PublicTorSummaryPoint[];
 };
 
 /** Guest/public shape. Strips the grade entirely and emits neutral signals. */
@@ -93,6 +114,10 @@ export function serialize(tor: TorLean): PublicTor {
     ruleFindings,
     graderVersion: _gv,
     graderModel: _gm,
+    summaryBullets: _bullets,
+    summarizedAt: _summarizedAt,
+    summaryVersion: _sv,
+    summaryModel: _sm,
     ...rest
   } = tor as TorLean & Record<string, unknown>;
 
@@ -109,36 +134,12 @@ export function serialize(tor: TorLean): PublicTor {
 }
 
 /**
- * Clean a PDF chunk for display without destroying its shape.
+ * Detail-only content: the documents, and the summary points read off them.
  *
- * The previous version collapsed every run of whitespace — newlines included —
- * into single spaces and then cut at 360 characters. That produced one
- * unbroken wall of Thai text ending mid-word, which is what made the detail
- * page's document section unreadable.
- *
- * Instead: collapse the spaces and single line breaks that PDF extraction
- * introduces mid-sentence, but keep blank lines, because those are the only
- * paragraph boundaries the source gives us. No truncation — a detail response
- * is allowed to be large (at most 24 chunks, capped in lib/extract/chunk.ts),
- * and a half-sentence is worse than a long one.
+ * `chunks` is still a parameter even though no chunk text is emitted — it is
+ * how a bullet's chunkIndex resolves to a filename and page range, which is
+ * what makes a generated point checkable against the source.
  */
-function tidyChunkText(raw: string): string {
-  return (
-    raw
-      // Normalise line endings first so the paragraph rule below sees \n only.
-      .replace(/\r\n?/g, "\n")
-      // Split on blank lines — the only paragraph boundary the PDF gives us.
-      .split(/\n[ \t]*\n\s*/)
-      // Within a paragraph every remaining break is soft wrapping from the page
-      // layout rather than meaning, so it collapses to a single space.
-      .map((paragraph) => paragraph.replace(/[ \t\n]+/g, " ").trim())
-      .filter((paragraph) => paragraph.length > 0)
-      .join("\n\n")
-  );
-}
-
-/** Detail-only document content. It exposes the extracted reading material,
- * never the worker's local paths or the private grading evidence. */
 export function serializeDetail(
   tor: TorLean,
   documents: IngestDocumentLean[],
@@ -149,6 +150,8 @@ export function serializeDetail(
     const current = pagesByDocument.get(String(chunk.documentId)) ?? 0;
     pagesByDocument.set(String(chunk.documentId), Math.max(current, chunk.pageEnd));
   }
+
+  const chunkByIndex = new Map(chunks.map((chunk) => [chunk.index, chunk]));
 
   return {
     ...serialize(tor),
@@ -161,16 +164,31 @@ export function serializeDetail(
       pages: pagesByDocument.get(String(document._id)) ?? 0,
       fetchedAt: document.fetchedAt?.toISOString() ?? null,
     })),
-    extractedSections: chunks.map((chunk) => ({
-      id: String(chunk._id),
-      heading: chunk.headingPath.length > 0
-        ? chunk.headingPath.join(" / ")
-        : chunk.filename,
-      text: tidyChunkText(chunk.text),
-      filename: chunk.filename,
-      pageStart: chunk.pageStart,
-      pageEnd: chunk.pageEnd,
-    })),
+    // sanitizeBullets again here, at the last boundary before a reader.
+    //
+    // It already ran when the model answered and again before the write, so a
+    // third pass should be redundant — and that is the point. This function is
+    // the FR-19 gate, and a gate that trusts its input is not a gate. Rows
+    // written by an older SUMMARY_VERSION, or by a future caller that forgets,
+    // are screened here regardless.
+    summaryPoints: sanitizeBullets(
+      (tor.summaryBullets ?? []).map((bullet) => ({
+        text: bullet.text ?? "",
+        chunkIndex: bullet.chunkIndex ?? -1,
+      })),
+    ).map((bullet, position) => {
+      const chunk = chunkByIndex.get(bullet.chunkIndex);
+      return {
+        // Bullets carry no _id of their own (_id: false on the subdocument),
+        // so the id is positional — stable for a given stored summary, which
+        // is all a React key needs.
+        id: `${String(tor._id)}-s${position}`,
+        text: bullet.text,
+        filename: chunk?.filename ?? null,
+        pageStart: chunk?.pageStart ?? 0,
+        pageEnd: chunk?.pageEnd ?? 0,
+      };
+    }),
   };
 }
 

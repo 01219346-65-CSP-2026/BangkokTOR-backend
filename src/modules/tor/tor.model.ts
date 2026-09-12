@@ -20,6 +20,10 @@ export const TOR_GRADES = ["A", "B", "C"] as const;
 export const GRADE_PHASES = ["legitimacy", "fairness"] as const;
 /** Bump when weights or prompts change — see graderVersion on the schema. */
 export const GRADER_VERSION = 1;
+/** Bump when the summary prompt or the FR-19 screen changes, so stale bullets
+ *  are findable. Separate from GRADER_VERSION: the prompt can be reworded
+ *  without the rulebook moving, and vice versa. */
+export const SUMMARY_VERSION = 1;
 
 export const TOR_STATUSES = [
   "discovered",
@@ -123,6 +127,29 @@ const torSchema = new Schema(
     // Which model produced this, e.g. "ollama:qwen2.5:7b". When Vertex replaces
     // Ollama this is how you know which rows to regrade.
     graderModel: { type: String, default: null },
+
+    // ── Summary (step 8). Unlike the grade, this IS public — it is what the
+    // detail page shows where raw document chunks used to be.
+    //
+    // Which is why it is the one piece of model output that has to be built
+    // incapable of accusing anyone: a bullet is generated prose about a named
+    // government agency. lib/ai/summaryGuard.ts screens it, and the screen runs
+    // twice — once leaving the model, once before this field is written.
+    summaryBullets: {
+      type: [
+        {
+          _id: false,
+          text: String,
+          // Which chunk produced it, so the serializer can cite a filename and
+          // page range. A point a reader cannot check is worth less.
+          chunkIndex: { type: Number, default: null },
+        },
+      ],
+      default: [],
+    },
+    summarizedAt: { type: Date, default: null },
+    summaryVersion: { type: Number, default: null },
+    summaryModel: { type: String, default: null },
 
     status: { type: String, enum: TOR_STATUSES, default: "discovered", required: true },
     statusReason: { type: String, default: null },

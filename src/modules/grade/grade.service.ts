@@ -1,11 +1,16 @@
 import type { Types } from "mongoose";
-import { createGrader } from "../../lib/ai/index.ts";
-import { isVerbatim, type GradeChunk, type RuleFinding } from "../../lib/ai/types.ts";
+import { createGrader, createSummarizer, sanitizeBullets } from "../../lib/ai/index.ts";
+import {
+  isVerbatim,
+  type GradeChunk,
+  type RuleFinding,
+  type SummaryBullet,
+} from "../../lib/ai/types.ts";
 import { AI_RULES, LEGITIMACY_RULES, RULES, ruleByCode } from "../../lib/grade/rules.ts";
 import { gradeFindings, skipFairness, type Finding } from "../../lib/grade/score.ts";
 import { ChunkModel } from "../extract/chunk.model.ts";
 import { recordError } from "../ingest/ingest.service.ts";
-import { GRADER_VERSION, TorModel } from "../tor/tor.model.ts";
+import { GRADER_VERSION, SUMMARY_VERSION, TorModel } from "../tor/tor.model.ts";
 
 // Stage 6: chunks -> findings -> a stored grade.
 //
@@ -144,6 +149,31 @@ export async function gradeTor(torId: Types.ObjectId | string): Promise<GradeOut
 
   const result = gradeFindings(findings);
 
+  /*
+   * The summary rides along with the grade because gradeTor has already paid
+   * for the expensive parts: the chunks are loaded and the model is warm. A
+   * separate worker would need its own queue, heartbeat kind and claim query
+   * to re-read the same rows.
+   *
+   * Its failure is deliberately not the grade's failure. The grade is the
+   * auditable artefact — it is defensible to the agency it describes and gets
+   * regraded on a version bump. Bullets are a reading aid, and a TOR with none
+   * renders perfectly well. So an unreachable or misbehaving model here costs
+   * the summary and nothing else.
+   */
+  const summarizer = createSummarizer();
+  let bullets: SummaryBullet[] = [];
+
+  try {
+    bullets = sanitizeBullets(await summarizer.summarize({ chunks }));
+  } catch (error) {
+    await recordError({
+      projectId: tor.projectId,
+      kind: "summarize-failed",
+      message: String(error),
+    });
+  }
+
   await TorModel.updateOne(
     { _id: torId },
     {
@@ -163,6 +193,13 @@ export async function gradeTor(torId: Types.ObjectId | string): Promise<GradeOut
         gradedAt: new Date(),
         graderVersion: GRADER_VERSION,
         graderModel: grader.id,
+        // The second FR-19 screen, at the DB boundary — the same belt-and-braces
+        // as isVerbatim in toFindings above. Nothing reaches this field without
+        // passing the descriptive check twice.
+        summaryBullets: sanitizeBullets(bullets),
+        summarizedAt: bullets.length > 0 ? new Date() : null,
+        summaryVersion: SUMMARY_VERSION,
+        summaryModel: summarizer.id,
         status: "graded",
         statusReason: null,
         // FR-19 public surface: a neutral count, never the letter.
