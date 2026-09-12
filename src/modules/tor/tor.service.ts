@@ -23,7 +23,20 @@ export type ListInput = {
 export async function listTors(input: ListInput) {
   const filter: QueryFilter<Tor> = {};
 
-  // Only publishable rows. A TOR still mid-pipeline is not a result.
+  /*
+   * What counts as a result.
+   *
+   * The comment here used to claim "only publishable rows", which was not what
+   * the code did: `documents_fetched` means the zip was downloaded and nothing
+   * more — not extracted, not graded, no summary. Those rows are in the list
+   * deliberately (FR-12: a record with a budget, an agency and a link back to
+   * source is useful on its own, and excluding them would empty the listings
+   * while the pipeline catches up), but calling that "publishable" hid the
+   * trade.
+   *
+   * `published` stays in the $in for the day an editorial promotion step
+   * exists. Nothing writes it today — see TOR_STATUSES in tor.model.ts.
+   */
   filter.status = { $in: ["graded", "published", "documents_fetched"] };
 
   if (input.agency) filter.agency = input.agency;

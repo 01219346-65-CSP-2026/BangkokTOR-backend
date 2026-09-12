@@ -1,18 +1,21 @@
-import { type FilterQuery } from "mongoose";
+import { type QueryFilter } from "mongoose";
 import { HttpError } from "../../middleware/errors.ts";
-import { TechstackModel, type Techstack, type TechstackLean, type CreateTechstackInput, type UpdateTechstackInput, type TechstackJSON } from "./techstack.model.ts";
+import {
+  TechstackModel,
+  type Techstack,
+  type TechstackLean,
+  type TechstackJSON,
+} from "./techstack.model.ts";
 import { assertValidId } from "../../shared/utils/assertValidId.ts";
+import { isDuplicateKey } from "../../shared/utils/parse.ts";
 import { type PageResult } from "../../shared/utils/PageResult.ts";
-import { type ListQuery } from "../../shared/utils/ListQuery.ts";
+import type {
+  CreateTechstackBody,
+  ListTechstacksQuery,
+  UpdateTechstackBody,
+} from "./techstack.validation.ts";
 
-
-type TechstackSortField = ""; // query sort fields
 export type PagedTechstacks = PageResult<TechstackJSON>;
-export type ListTechstacksQuery = ListQuery<TechstackSortField> & {
-  // query filter fields
-  user_id?: string,
-  tor_id?: string
-};
 
 function serialize(doc: TechstackLean): TechstackJSON {
   const { _id, ...fields } = doc;
@@ -21,24 +24,20 @@ function serialize(doc: TechstackLean): TechstackJSON {
 
 // ==================================
 
-export async function listTechstacks(query: ListTechstacksQuery): Promise<PagedTechstacks> {
-  const page = Math.max(1, Number(query.page ?? 1) || 1);
-  const limit = Math.min(100, Math.max(1, Number(query.limit ?? 20) || 20));
+export async function listTechstacks(
+  query: ListTechstacksQuery,
+): Promise<PagedTechstacks> {
+  const { page, limit, sort } = query;
 
-  const filter: FilterQuery<Techstack> = {};
-  // add query filter fields to filter here
-  if (query.user_id) {
-    assertValidId(query.user_id);
-    filter.user_id = query.user_id;
-  }
-  if (query.tor_id) {
-    assertValidId(query.tor_id);
-    filter.tor_id = query.tor_id;
+  const filter: QueryFilter<Techstack> = {};
+  if (query.search) {
+    // Anchored, so the {name:1} unique index can still serve the prefix.
+    filter.name = { $regex: `^${escapeRegex(query.search)}`, $options: "i" };
   }
 
   const [docs, total] = await Promise.all([
     TechstackModel.find(filter)
-      .sort(query.sort)
+      .sort(sort)
       .skip((page - 1) * limit)
       .limit(limit)
       .lean<TechstackLean[]>()
@@ -49,10 +48,15 @@ export async function listTechstacks(query: ListTechstacksQuery): Promise<PagedT
   return {
     items: docs.map(serialize),
     total,
-    page: page,
-    limit: limit,
+    page,
+    limit,
     pages: Math.ceil(total / limit),
   };
+}
+
+/** A user-supplied search term is not a pattern. */
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 export async function getTechstackById(id: string): Promise<TechstackJSON> {
@@ -64,17 +68,28 @@ export async function getTechstackById(id: string): Promise<TechstackJSON> {
   return serialize(doc);
 }
 
-export async function createTechstack(input: CreateTechstackInput): Promise<TechstackJSON> {
+export async function createTechstack(
+  input: CreateTechstackBody,
+): Promise<TechstackJSON> {
   try {
     const doc = await TechstackModel.create(input);
     return serialize(doc.toObject<TechstackLean>());
   } catch (err) {
+    // `name` is unique. Without this the E11000 misses the instanceof check in
+    // the error handler and surfaces as a 500.
+    if (isDuplicateKey(err)) {
+      throw new HttpError(409, `Tech stack already exists: ${input.name}`);
+    }
     throw err;
   }
 }
 
-export async function updateTechstack(id: string, input: UpdateTechstackInput): Promise<TechstackJSON> {
+export async function updateTechstack(
+  id: string,
+  input: UpdateTechstackBody,
+): Promise<TechstackJSON> {
   assertValidId(id);
+
   try {
     const doc = await TechstackModel.findByIdAndUpdate(
       id,
@@ -87,6 +102,9 @@ export async function updateTechstack(id: string, input: UpdateTechstackInput): 
     if (!doc) throw new HttpError(404, `${TechstackModel.modelName} not found: ${id}`);
     return serialize(doc);
   } catch (err) {
+    if (isDuplicateKey(err)) {
+      throw new HttpError(409, `Tech stack already exists: ${input.name}`);
+    }
     throw err;
   }
 }

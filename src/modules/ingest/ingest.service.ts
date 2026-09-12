@@ -163,6 +163,22 @@ export async function processRow(
     { upsert: true, returnDocument: "after", setDefaultsOnInsert: true },
   );
 
+  // An upsert "always" returns a document — except on a write conflict retry,
+  // or if something deletes the row between the two operations. Four `tor!`
+  // assertions below used to paper over that, which turned a rare null into a
+  // TypeError thrown deep inside a detached loop, where the only trace is a
+  // console line. Failing as a typed outcome instead keeps it in the queue's
+  // retry path.
+  if (!tor) {
+    await recordError({
+      sourceId: SOURCE_ID,
+      projectId: row.projectId,
+      kind: "tor-upsert-returned-null",
+      message: "findOneAndUpdate with upsert returned no document",
+    });
+    return { ok: false, reason: "tor-upsert-failed" };
+  }
+
   let docs;
   try {
     docs = await ckanSource.listDocuments(row.projectId);
@@ -180,7 +196,7 @@ export async function processRow(
     // The expected outcome for most projects (responseCode "1"/E0001). Data,
     // not an error — this must never reach ingest_errors.
     await TorModel.updateOne(
-      { _id: tor!._id },
+      { _id: tor._id },
       { $set: { status: "extraction_incomplete", statusReason: "no-bundle" } },
     );
     return { ok: true };
@@ -216,7 +232,7 @@ export async function processRow(
         url: doc.url,
       });
       await TorModel.updateOne(
-        { _id: tor!._id },
+        { _id: tor._id },
         { $set: { status: "extraction_incomplete", statusReason: outcome.reason } },
       );
       // Not a retry: oversize and not-a-zip won't improve on a second attempt.
@@ -227,7 +243,7 @@ export async function processRow(
       { sourceId: SOURCE_ID, projectId: row.projectId, externalId: doc.externalId ?? null },
       {
         $set: {
-          torId: tor!._id,
+          torId: tor._id,
           sourceId: SOURCE_ID,
           projectId: row.projectId,
           kind: doc.kind,
@@ -244,7 +260,7 @@ export async function processRow(
     );
   }
 
-  await TorModel.updateOne({ _id: tor!._id }, { $set: { status: "documents_fetched" } });
+  await TorModel.updateOne({ _id: tor._id }, { $set: { status: "documents_fetched" } });
   return { ok: true };
 }
 

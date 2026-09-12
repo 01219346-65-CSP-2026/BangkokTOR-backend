@@ -31,8 +31,9 @@ export const TOR_STATUSES = [
   "extraction_pending",
   "extraction_incomplete",
   "graded",
+  // Reserved for an editorial promotion step that does not exist yet: nothing
+  // writes this, and listTors reads it so the day it lands needs no migration.
   "published",
-  "error",
 ] as const;
 export type TorStatus = (typeof TOR_STATUSES)[number];
 
@@ -170,6 +171,13 @@ torSchema.index({ status: 1, isSoftware: 1 });
 torSchema.index({ category: 1, isSoftware: 1 });
 // Finding rows to (re)grade: ungraded ones, and ones graded by an old version.
 torSchema.index({ status: 1, graderVersion: 1 });
+// The public list (tor.service.ts listTors) filters on status and sorts by
+// announcedAt on every request. With only the separate {status,isSoftware} and
+// {announcedAt:-1} indexes, Mongo can use one or the other — so it either
+// scanned, or sorted every matching TOR in memory and risked the 32MB sort
+// limit as the corpus grows. This compound serves filter, sort and pagination
+// as one index range scan.
+torSchema.index({ status: 1, announcedAt: -1 });
 
 export type Tor = InferSchemaType<typeof torSchema>;
 export type TorDoc = HydratedDocument<Tor>;

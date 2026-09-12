@@ -1,10 +1,16 @@
 import type { RequestHandler } from "express";
 import * as service from "./notification.service.ts";
+import {
+  parseCreateNotification,
+  parseListNotifications,
+  parseUpdateNotification,
+} from "./notification.validation.ts";
 
+// Controllers stay thin: parse, delegate, respond. The parse step is what lets
+// the service assume its input is already the right shape.
 
 export const listNotifications: RequestHandler = async (req, res) => {
-  const query = req.query;
-  res.json(await service.listNotifications(query));
+  res.json(await service.listNotifications(parseListNotifications(req.query)));
 };
 
 export const getNotification: RequestHandler<{ id: string }> = async (req, res) => {
@@ -12,16 +18,16 @@ export const getNotification: RequestHandler<{ id: string }> = async (req, res) 
 };
 
 export const createNotification: RequestHandler = async (req, res) => {
-  const input = req.body;
-  const created = await service.createNotification(input);
+  const created = await service.createNotification(parseCreateNotification(req.body));
 
   // 201 + Location is what a well-behaved REST API returns for a create.
   res.status(201).location(`${req.baseUrl}/${created.id}`).json(created);
 };
 
 export const updateNotification: RequestHandler<{ id: string }> = async (req, res) => {
-  const input = req.body;
-  res.json(await service.updateNotification(req.params.id, input));
+  res.json(
+    await service.updateNotification(req.params.id, parseUpdateNotification(req.body)),
+  );
 };
 
 export const deleteNotification: RequestHandler<{ id: string }> = async (req, res) => {

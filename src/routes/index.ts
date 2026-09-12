@@ -1,7 +1,5 @@
 import { Router } from "express";
 import { healthRouter } from "./health.route.ts";
-import { exampleRouter } from "../modules/_template/example.route.ts";
-import { thingRouter } from "../modules/_thing/thing.route.ts";
 import { notificationRouter } from "../modules/notification/notification.route.ts";
 import { techstackRouter } from "../modules/techstack/techstack.route.ts";
 import { userRouter } from "../modules/user/user.route.ts";
@@ -22,8 +20,10 @@ routes.get("/", (_req, res) => {
 // a limiter here would mark a busy container unhealthy.
 routes.use(healthRouter);
 
-//routes.use("/api/example", exampleRouter);
-//routes.use("/api/thing", thingRouter);
+// modules/_template is the reference implementation — route, controller,
+// service, model, validation — kept as documentation, not mounted. Its
+// validation layer is what src/shared/utils/parse.ts was lifted from after
+// three copies of it shipped without one.
 
 // The ingest/extract/grade routers set their own tiers per route, because
 // `/run` and `/status` in the same router need different budgets.
