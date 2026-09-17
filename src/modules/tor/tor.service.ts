@@ -1,5 +1,7 @@
 import { isValidObjectId, type QueryFilter } from "mongoose";
-import { serialize, serializeGrade } from "./tor.serialize.ts";
+import { ChunkModel } from "../extract/chunk.model.ts";
+import { DocumentModel } from "../ingest/document.model.ts";
+import { serialize, serializeDetail, serializeGrade } from "./tor.serialize.ts";
 import { TOR_CATEGORIES, TorModel, type Tor, type TorLean } from "./tor.model.ts";
 
 // Services return plain data (6). Every read that leaves this file has been
@@ -21,7 +23,20 @@ export type ListInput = {
 export async function listTors(input: ListInput) {
   const filter: QueryFilter<Tor> = {};
 
-  // Only publishable rows. A TOR still mid-pipeline is not a result.
+  /*
+   * What counts as a result.
+   *
+   * The comment here used to claim "only publishable rows", which was not what
+   * the code did: `documents_fetched` means the zip was downloaded and nothing
+   * more — not extracted, not graded, no summary. Those rows are in the list
+   * deliberately (FR-12: a record with a budget, an agency and a link back to
+   * source is useful on its own, and excluding them would empty the listings
+   * while the pipeline catches up), but calling that "publishable" hid the
+   * trade.
+   *
+   * `published` stays in the $in for the day an editorial promotion step
+   * exists. Nothing writes it today — see TOR_STATUSES in tor.model.ts.
+   */
   filter.status = { $in: ["graded", "published", "documents_fetched"] };
 
   if (input.agency) filter.agency = input.agency;
@@ -61,6 +76,20 @@ export async function getTor(id: string) {
   if (!isValidObjectId(id)) return null;
   const tor = await TorModel.findById(id).lean();
   return tor ? serialize(tor as TorLean) : null;
+}
+
+export async function getTorDetail(id: string) {
+  if (!isValidObjectId(id)) return null;
+
+  const tor = await TorModel.findById(id).lean();
+  if (!tor) return null;
+
+  const [documents, chunks] = await Promise.all([
+    DocumentModel.find({ torId: tor._id }).sort({ createdAt: 1 }).lean(),
+    ChunkModel.find({ torId: tor._id }).sort({ index: 1 }).lean(),
+  ]);
+
+  return serializeDetail(tor as TorLean, documents, chunks);
 }
 
 /** The full grade. Kept off the public shape deliberately — mount behind auth. */

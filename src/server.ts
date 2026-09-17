@@ -1,8 +1,12 @@
 import { createApp } from "./app.ts";
-import { env } from "./config/env.ts";
+import { assertServeConfig, env } from "./config/env.ts";
 import { connectMongo, disconnectMongo } from "./db/mongo.ts";
 
 export async function start() {
+  // Before the DB connection, so a misconfigured production deploy fails with
+  // one clear message instead of coming up with its write routes wide open.
+  assertServeConfig();
+
   await connectMongo();
 
   const server = createApp().listen(env.port, () => {

@@ -1,18 +1,22 @@
-import { type FilterQuery } from "mongoose";
+import { type QueryFilter } from "mongoose";
 import { HttpError } from "../../middleware/errors.ts";
-import { NotificationModel, type Notification, type NotificationLean, type CreateNotificationInput, type UpdateNotificationInput, type NotificationJSON } from "./notification.model.ts";
+import {
+  NotificationModel,
+  type Notification,
+  type NotificationLean,
+  type NotificationJSON,
+} from "./notification.model.ts";
 import { assertValidId } from "../../shared/utils/assertValidId.ts";
 import { type PageResult } from "../../shared/utils/PageResult.ts";
-import { type ListQuery } from "../../shared/utils/ListQuery.ts";
+import { isDuplicateKey } from "../../shared/utils/parse.ts";
+import type {
+  CreateNotificationBody,
+  ListNotificationsQuery,
+  UpdateNotificationBody,
+} from "./notification.validation.ts";
 
 
-type NotificationSortField = ""; // query sort fields
 export type PagedNotifications = PageResult<NotificationJSON>;
-export type ListNotificationsQuery = ListQuery<NotificationSortField> & {
-  // query filter fields
-  user_id?: string,
-  tor_id?: string
-};
 
 function serialize(doc: NotificationLean): NotificationJSON {
   const { _id, ...fields } = doc;
@@ -22,10 +26,9 @@ function serialize(doc: NotificationLean): NotificationJSON {
 // ==================================
 
 export async function listNotifications(query: ListNotificationsQuery): Promise<PagedNotifications> {
-  const page = Math.max(1, Number(query.page ?? 1) || 1);
-  const limit = Math.min(100, Math.max(1, Number(query.limit ?? 20) || 20));
+  const { page, limit, sort } = query;
 
-  const filter: FilterQuery<Notification> = {};
+  const filter: QueryFilter<Notification> = {};
   // add query filter fields to filter here
   if (query.user_id) {
     assertValidId(query.user_id);
@@ -35,10 +38,11 @@ export async function listNotifications(query: ListNotificationsQuery): Promise<
     assertValidId(query.tor_id);
     filter.tor_id = query.tor_id;
   }
+  if (query.is_read !== undefined) filter.is_read = query.is_read;
 
   const [docs, total] = await Promise.all([
     NotificationModel.find(filter)
-      .sort(query.sort)
+      .sort(sort)
       .skip((page - 1) * limit)
       .limit(limit)
       .lean<NotificationLean[]>()
@@ -49,8 +53,8 @@ export async function listNotifications(query: ListNotificationsQuery): Promise<
   return {
     items: docs.map(serialize),
     total,
-    page: page,
-    limit: limit,
+    page,
+    limit,
     pages: Math.ceil(total / limit),
   };
 }
@@ -64,16 +68,19 @@ export async function getNotificationById(id: string): Promise<NotificationJSON>
   return serialize(doc);
 }
 
-export async function createNotification(input: CreateNotificationInput): Promise<NotificationJSON> {
+export async function createNotification(input: CreateNotificationBody): Promise<NotificationJSON> {
   try {
     const doc = await NotificationModel.create(input);
     return serialize(doc.toObject<NotificationLean>());
   } catch (err) {
+    if (isDuplicateKey(err)) {
+      throw new HttpError(409, "That notification already exists");
+    }
     throw err;
   }
 }
 
-export async function updateNotification(id: string, input: UpdateNotificationInput): Promise<NotificationJSON> {
+export async function updateNotification(id: string, input: UpdateNotificationBody): Promise<NotificationJSON> {
   assertValidId(id);
   try {
     const doc = await NotificationModel.findByIdAndUpdate(
@@ -87,6 +94,9 @@ export async function updateNotification(id: string, input: UpdateNotificationIn
     if (!doc) throw new HttpError(404, `${NotificationModel.modelName} not found: ${id}`);
     return serialize(doc);
   } catch (err) {
+    if (isDuplicateKey(err)) {
+      throw new HttpError(409, "That notification already exists");
+    }
     throw err;
   }
 }

@@ -1,4 +1,4 @@
-import { Schema, model, Document, Types, type InferSchemaType, type HydratedDocument } from 'mongoose';
+import { Schema, model, Types, type InferSchemaType, type HydratedDocument } from 'mongoose';
 
 
 const notificationSchema = new Schema({
@@ -23,5 +23,12 @@ export type CreateNotificationInput = Omit<Notification, "_id" | "__v" | "create
 export type UpdateNotificationInput = Partial<CreateNotificationInput>;
 
 export type NotificationJSON = Omit<Notification, "__v" | "created_at"> & { id: string };
+
+// "this user's notifications, newest first" is the only query this collection
+// exists to answer, and it had no index at all — every request was a full
+// collection scan.
+notificationSchema.index({ user_id: 1, created_at: -1 });
+// Unread counts for the nav badge.
+notificationSchema.index({ user_id: 1, is_read: 1 });
 
 export const NotificationModel = model('Notification', notificationSchema);

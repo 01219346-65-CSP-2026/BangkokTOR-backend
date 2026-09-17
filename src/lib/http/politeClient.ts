@@ -28,7 +28,7 @@ export type PoliteOptions = {
 //     }
 //   }
 //
-// Write HttpError with: status (number), url (string), body (string),
+// Write UpstreamHttpError with: status (number), url (string), body (string),
 // retryable (boolean). Truncate body — an HTML error page can be enormous.
 // There's a BODY_SNIPPET-style constant's worth of judgement here; pick a size.
 //
@@ -43,7 +43,19 @@ export type PoliteOptions = {
 // ═════════════════════════════════════════════════════════════════════════════
 const BODY_SNIPPET = 500;
 
-export class HttpError extends Error {
+/**
+ * A non-2xx response from an UPSTREAM host we fetched (CKAN, the e-GP portal).
+ *
+ * Named distinctly from middleware/errors.ts's HttpError, which describes a
+ * response WE are about to send. Both used to be called HttpError and both set
+ * `this.name = "HttpError"`, so the `err instanceof HttpError` check in the
+ * error handler compared against the wrong class: a clean upstream 429 would
+ * have been reported to our own caller as an opaque 500 with the message
+ * stripped in production. The ingest paths catch these into recordError today,
+ * so it never surfaced — but the names were a trap for the first refactor that
+ * let one through.
+ */
+export class UpstreamHttpError extends Error {
   readonly status: number;
   readonly url: string;
   readonly body: string;
@@ -51,7 +63,7 @@ export class HttpError extends Error {
 
   constructor(status: number, url: string, body:string) {
     super(`HTTP ${status} for ${url}`);
-    this.name = "HttpError";
+    this.name = "UpstreamHttpError";
     this.status = status;
     this.url = url;
     this.body = body.slice(0, BODY_SNIPPET);
@@ -193,7 +205,7 @@ function retryAfterMs(response: Response): number | undefined {
 //
 //   2. const host = new URL(url).host;
 //
-//   3. Declare `let lastError: HttpError | NetworkError | undefined;` before
+//   3. Declare `let lastError: UpstreamHttpError | NetworkError | undefined;` before
 //      the loop so it survives across attempts.
 //
 //   4. for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -233,7 +245,7 @@ function retryAfterMs(response: Response): number | undefined {
 //
 //        e. Non-2xx: NOW you may read the body (an error page is small):
 //             const body = await response.text().catch(() => "");
-//           Build an HttpError. Then: if it isn't retryable, or this was the
+//           Build an UpstreamHttpError. Then: if it isn't retryable, or this was the
 //           last attempt, throw it. Otherwise sleep — and here's where a 429's
 //           retry-after beats your own backoff if the server gave you one —
 //           then loop.
@@ -255,7 +267,7 @@ export async function politeFetch(
   const maxAttempts = options.maxAttempts ?? env.httpMaxAttempts;
 
   const host = new URL(url).host;
-  let lastError: HttpError | NetworkError | undefined
+  let lastError: UpstreamHttpError | NetworkError | undefined
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     await nextSlot(host, delayMs);
@@ -286,7 +298,7 @@ export async function politeFetch(
     if (response.ok) return response;
 
     const body = await response.text().catch(() => "");
-    lastError = new HttpError(response.status, url, body);
+    lastError = new UpstreamHttpError(response.status, url, body);
 
     if (!lastError.retryable || attempt === maxAttempts) throw lastError;
 

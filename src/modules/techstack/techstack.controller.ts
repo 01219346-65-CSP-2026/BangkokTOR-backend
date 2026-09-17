@@ -1,10 +1,16 @@
 import type { RequestHandler } from "express";
 import * as service from "./techstack.service.ts";
+import {
+  parseCreateTechstack,
+  parseListTechstacks,
+  parseUpdateTechstack,
+} from "./techstack.validation.ts";
 
+// Controllers stay thin: parse, delegate, respond. The parse step is what lets
+// the service assume its input is already the right shape.
 
 export const listTechstacks: RequestHandler = async (req, res) => {
-  const query = req.query;
-  res.json(await service.listTechstacks(query));
+  res.json(await service.listTechstacks(parseListTechstacks(req.query)));
 };
 
 export const getTechstack: RequestHandler<{ id: string }> = async (req, res) => {
@@ -12,16 +18,16 @@ export const getTechstack: RequestHandler<{ id: string }> = async (req, res) => 
 };
 
 export const createTechstack: RequestHandler = async (req, res) => {
-  const input = req.body;
-  const created = await service.createTechstack(input);
+  const created = await service.createTechstack(parseCreateTechstack(req.body));
 
   // 201 + Location is what a well-behaved REST API returns for a create.
   res.status(201).location(`${req.baseUrl}/${created.id}`).json(created);
 };
 
 export const updateTechstack: RequestHandler<{ id: string }> = async (req, res) => {
-  const input = req.body;
-  res.json(await service.updateTechstack(req.params.id, input));
+  res.json(
+    await service.updateTechstack(req.params.id, parseUpdateTechstack(req.body)),
+  );
 };
 
 export const deleteTechstack: RequestHandler<{ id: string }> = async (req, res) => {
