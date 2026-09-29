@@ -1,11 +1,11 @@
-# feat/91: AI classification (the grading rulebook on Vertex AI)
+# feat/92: TOR AI summary (whole text, one Vertex call)
 
 > **You write the code on this branch.** The tests are the spec. When they're all green, the branch is done.
 >
-> **Before you start:** bring your finished branch 90 in, since this branch needs `tor_texts`:
+> **Before you start:** bring your finished branches 90 and 91 in, because this branch reuses your `callGemini`:
 > ```sh
-> git switch feat/91/ai-classification
-> git merge feat/90/pdf-extraction
+> git switch feat/92/tor-ai-summary
+> git merge feat/91/ai-classification     # already contains your 90 work
 > ```
 > Setup and syntax help: [`docs/learning/`](docs/learning/README.md).
 
@@ -13,31 +13,21 @@
 
 ## Why this branch exists
 
-Every TOR is graded against a **rulebook** of 15 rules (`src/lib/grade/rules.ts`), for example:
-- `PENALTY`: a late-delivery fine clause (unfair when above 0.2% a day);
-- `NOENTITY`: the document doesn't require a registered company.
+The TOR detail page shows a few **summary points**: short Thai sentences such as *"ผู้ยื่นข้อเสนอต้องวางหลักประกัน ๔๖ ล้านบาท"*, each citing the PDF it came from.
 
-Two rules are checked by plain code (`IDMISMATCH`, `BUDGETMISMATCH`). Most of the rest need an AI to *read* the document.
+**Today** the summary is written by the local Ollama model, 10 chunks at a time, one call per chunk.
 
-**Today** that AI is a small local model (Ollama). It reads one 6,000-character chunk at a time, so each TOR needs about 40 calls. A "router" (`src/lib/ai/route.ts`) guesses which chunks to send for which rule.
+**Now** we give Gemini the **whole text in one call** and ask for up to 8 points, each tagged with its `filename`. After this branch, Ollama is gone from the codebase entirely.
 
-**Now** branch 90 gives us the whole text in one field, and Gemini can read all of it. So:
+### The rule that matters most here: FR-19, describe and never judge
 
-> For each phase (legitimacy, then fairness), send **all its rules + the whole text in ONE Gemini call**, and get back one `{ code, present, quote }` per rule.
+A grade is private. **Summary points are public**, and they're written by an AI about a *named government agency*. A point like *"เงื่อนไขนี้ไม่เป็นธรรม"* ("this condition is unfair") reads as an accusation, and the project must never publish one. So there are three layers of protection, and you'll build or keep all three:
 
-### The one rule you must not break: never trust the AI
+1. the **prompt** forbids judging;
+2. **`parseSummary`** drops any judgemental point (`isDescriptive` in `summaryGuard.ts`);
+3. **`sanitizeBullets`** screens again before saving, and once more before serving.
 
-The AI can invent a quote. So a rule only counts as **fired** if its quote really appears in the document (`isVerbatim` in `types.ts`). This check happens twice: once when the answer comes back (`keepVerifiedFindings`), and again before anything is saved (`grade.service.ts`). A made-up quote is thrown away, never stored.
-
-### How Gemini is called
-
-With a plain `fetch`. There's no SDK and no service account. Your Vertex "express mode" key goes in the URL:
-
-```
-POST https://aiplatform.googleapis.com/v1/publishers/google/models/gemini-2.5-flash:generateContent?key=YOUR_KEY
-```
-
-We send a **JSON schema** along with the prompt, and Gemini is forced to answer in exactly that shape. That means there's no free text to pick apart, just `JSON.parse`.
+For reference, on a real TOR the finished version produced 8 points like *"ค่าปรับ … ให้คิดในอัตราร้อยละ ๐.๒๐ … ต่อวัน"*: facts and figures, no opinions. That's the target.
 
 ---
 
@@ -45,130 +35,108 @@ We send a **JSON schema** along with the prompt, and Gemini is forced to answer 
 
 | # | Check | Command |
 |---|---|---|
-| 1 | The Vertex module spec is green | `bun test src/lib/ai/vertex.test.ts` |
-| 2 | The wiring checklist is green | `bun test checklist/91` |
-| 3 | Branch 90 is still green | `bun test checklist/90` |
-| 4 | **Every** test in the repo is green | `bun test` |
-| 5 | TypeScript is happy | `bun run typecheck` |
-| 6 | It works for real | one real TOR graded with your key (step 11) |
-
-Tests 1–5 never call Google. They use a fake `fetch`, so they're free and don't need a key.
+| 1 | The summary module spec is green | `bun test src/lib/ai/vertexSummary.test.ts` |
+| 2 | The FR-19 screen tests are green | `bun test src/lib/ai/summaryGuard.test.ts` |
+| 3 | The API serializer tests are green | `bun test src/modules/tor` |
+| 4 | The wiring checklist is green | `bun test checklist/92` |
+| 5 | **Every** test in the repo is green (90 and 91 included) | `bun test` |
+| 6 | TypeScript is happy | `bun run typecheck` |
+| 7 | It works for real | one real TOR shows cited summary points (step 10) |
 
 ---
 
 ## Steps
 
-### Step 1: settings
-
-- `src/config/env.ts`: add `vertexApiKey` (from `VERTEX_API_KEY`, default `""`) and `vertexModel` (from `VERTEX_MODEL`, default `"gemini-2.5-flash"`).
-- `.env.example`: add `VERTEX_API_KEY=` (**empty**, because this file is committed) and `VERTEX_MODEL=gemini-2.5-flash`, with a comment on where to get a key.
-- Your own `.env`: put your real key there. `.env` is git-ignored. **Never** paste a key anywhere else.
-
-✅ `bun test checklist/91`: step 1.
-
-### Step 2: change the types
+### Step 1: change the types
 
 **File:** `src/lib/ai/types.ts`
 
-- `RuleFinding`: remove `chunkIndex` and add `checked: boolean` plus `filename: string | null`.
-- `GradeInput`: becomes `{ rules, text, files }`. `text` is the full text and `files` is the `FileSpan[]` from branch 90.
-- `Grader`: rename the method from `gradeChunks(...)` to `grade(input: GradeInput)`.
+- `SummaryBullet`: replace `chunkIndex: number` with `filename: string | null`.
+- `SummaryInput`: becomes `{ text: string; files: FileSpan[] }`. It's the same stored text the grader reads.
+- Delete `GradeChunk` and `MAX_SUMMARY_CHUNKS`, since nothing uses chunks anymore.
 
-Then run `bun run typecheck`. The errors it lists are your to-do list for steps 7–10.
+Run `bun run typecheck`. Its errors are your to-do list for the rest of this branch.
 
-✅ `bun test checklist/91`: both step 2 checks.
+✅ `bun test checklist/92`: step 1.
 
-### Step 3: `locateQuote`
+### Step 2: keep the filename through the screen
 
-**File:** `src/lib/ai/types.ts` (the stub is at the bottom). It finds *where* a quote sits in the text, even when the spacing differs. You need this so you can tell which PDF a quote came from.
+**File:** `src/lib/ai/summaryGuard.ts` → `sanitizeBullets` copies `filename` (instead of `chunkIndex`) onto each kept bullet. Its tests are already updated.
 
-✅ `bun test src/lib/ai/vertex.test.ts -t "step 3"`
+✅ `bun test src/lib/ai/summaryGuard.test.ts`, and `bun test checklist/92`: step 2.
 
-### Step 4: `callGemini` and `assertVertexConfig`
+### Step 3: the three pure helpers
 
-**File:** `src/lib/ai/vertex.ts`. The comment above `callGemini` shows the exact request and reply shapes. The tests replace `fetch` with a fake, so read them to see exactly what's expected. Order inside `callGemini`:
-1. `assertVertexConfig()` (throws if there's no key, so `fetch` is never reached);
-2. `fetch(url, { method: "POST", headers, body: JSON.stringify(...) , signal })`;
-3. `!response.ok` → throw (include the status, **not** the URL, because the URL contains the key);
-4. read the JSON, check `promptFeedback.blockReason` and `candidates[0].finishReason === "STOP"`;
-5. `JSON.parse` the text of `candidates[0].content.parts`, and throw a clear error if it fails.
+**File:** `src/lib/ai/vertexSummary.ts` (stubs with hints). This is a new file on purpose, so it can't clash with your `vertex.ts` from branch 91.
 
-✅ `bun test src/lib/ai/vertex.test.ts -t "step 4"`
+- `summarySchema(filenames)`: like `gradeSchema`. `filename` is an **enum** of the real filenames, so the model can't invent a file.
+- `buildSummaryPrompt(text)`: the instructions. The FR-19 part is the most important. There's a good starting point in `src/lib/ai/ollama.ts` → `buildSummaryPrompt` (read it before deleting it in step 9). Adapt it from "one section" to "the whole document, with files".
+- `parseSummary(raw, files)`: never trust the answer. The comment lists every case.
 
-### Step 5: the three pure helpers
+✅ `bun test src/lib/ai/vertexSummary.test.ts -t "step 3"`
 
-**File:** `src/lib/ai/vertex.ts`
+### Step 4: `createVertexSummarizer`
 
-- `gradeSchema(codes)`: the answer shape. `code` must be an `enum` of `codes`, so the model can't invent rules.
-- `buildGradePrompt(rules, text)`: **define** each rule; don't just name it. We measured this on the old model: asking about a bare rule name scored 0/3, while giving the definition scored 3/3. Include the definition, `unfairWhen` and the cue words, demand a WORD-FOR-WORD quote of at most `MAX_EVIDENCE_CHARS` characters (at 200 characters the old model quoted exactly; longer quotes drifted into paraphrase), and append the whole text.
-- `keepVerifiedFindings(raw, rules, text, files)`: the gate. The comment above it lists all four cases. Loop over **your** rules, not the model's answers, so every rule gets exactly one finding.
+It's the same shape as your `createVertexGrader`. Reuse `callGemini` from `./vertex.ts`. Empty text means no call.
 
-✅ `bun test src/lib/ai/vertex.test.ts -t "step 5"`
+✅ `bun test src/lib/ai/vertexSummary.test.ts` is fully green.
 
-### Step 6: `createVertexGrader`
+### Step 5: use it
 
-It glues steps 4 and 5 together: one `callGemini` per `grade()`, with a timeout (`AbortController` + `setTimeout(..., env.aiTimeoutMs)`, cleared in `finally`).
+`src/lib/ai/index.ts` → `createSummarizer()` always returns `createVertexSummarizer()` from `./vertexSummary.ts`. Remove the `AI_PROVIDER` switch.
 
-✅ `bun test src/lib/ai/vertex.test.ts` is fully green.
+✅ `bun test checklist/92`: step 5.
 
-### Step 7: use it
+### Step 6: summarize the stored text
 
-`src/lib/ai/index.ts` → `createGrader()` always returns `createVertexGrader()`. The summarizer keeps its `AI_PROVIDER` switch until branch 92.
+**File:** `src/modules/grade/grade.service.ts` → `gradeTor`. Delete the "one chunk" bridge and call `summarizer.summarize({ text, files })`. Keep the `sanitizeBullets(...)` around it, and keep it inside the `try/catch`: a failed summary must **never** fail the grade.
 
-### Step 8: grade the stored text
+✅ `bun test checklist/92`: step 6.
 
-**File:** `src/modules/grade/grade.service.ts` → `gradeTor`
+### Step 7: storage
 
-1. Remove the branch 90 "one chunk" bridge. Use `stored.fullText` and `stored.files` directly.
-2. `checkDeterministic(tor, text)` searches the full text instead of joined chunks.
-3. `grader.grade({ rules: aiRulesFor("legitimacy"), text, files })`, and the same for fairness.
-4. `toFindings(raw, text)`: the **second** gate. Re-check `isVerbatim(f.evidence, text)` and keep `checked` and `filename`.
-5. When saving `ruleFindings`, store `filename`.
-6. The summary still expects chunks until branch 92, so give it `[{ index: 0, headingPath: [], text }]` for now.
-7. Look at `findUngraded()`. Old TORs are already `"graded"` (version 1) and must be regraded **without** leaving the public list. Make it pick up both `extraction_pending` TORs and `graded` TORs whose `graderVersion` is older than the current one, but only TORs that have a `tor_texts` row (`TorTextModel.distinct("torId")`).
+**File:** `src/modules/tor/tor.model.ts`
+- `SUMMARY_VERSION = 2`
+- add `filename: { type: String, default: null }` to the `summaryBullets` sub-document. Keep `chunkIndex` so old rows still load.
 
-✅ `bun test checklist/91`: step 8.
+When saving in `grade.service.ts`, the bullets now carry `filename`.
 
-### Step 9: storage and API
+✅ `bun test checklist/92`: step 7.
 
-- `src/modules/tor/tor.model.ts`: `GRADER_VERSION = 2`, and add `filename` to the `ruleFindings` sub-document. Keep `chunkIndex` so old rows still load.
-- `src/lib/grade/score.ts`: add `filename?: string | null` to `Finding`.
-- `src/modules/tor/tor.serialize.ts` → `serializeGrade`: include `filename` in each finding.
+### Step 8: show the citation again
 
-✅ `bun test checklist/91`: the step 9 checks.
+**File:** `src/modules/tor/tor.serialize.ts` → `serializeDetail`. Each summary point's `filename` comes straight from the stored bullet (`bullet.filename ?? null`). `pageStart`/`pageEnd` stay `0`. The public shape doesn't change, so the frontend needs no changes.
 
-### Step 10: clean up
+✅ `bun test src/modules/tor`
 
-- Delete `src/lib/ai/route.ts` and `src/lib/ai/route.test.ts`, since there are no chunks left to route.
-- In `src/lib/ai/ollama.ts`, delete the grader half (`buildPrompt`, `askOne`, `createOllamaGrader`) and keep the summarizer for now.
-- `src/grade-worker.ts`: call `assertVertexConfig()` at startup, and log `env.vertexModel`.
+### Step 9: remove Ollama for good
+
+- Delete `src/lib/ai/ollama.ts`.
+- `src/config/env.ts`: remove `aiProvider`, `ollamaUrl` and `ollamaModel`.
+- `.env.example`: remove `AI_PROVIDER` and the `OLLAMA_*` lines.
+- `src/lib/ai/vertex.ts`: delete the placeholder `createVertexSummarizer` at the bottom (the real one now lives in `vertexSummary.ts`).
+- Search for leftovers: `grep -rn "ollama\|aiProvider" src`.
 
 ✅ `bun test`: everything green. `bun run typecheck`: no errors.
 
-### Step 11: grade one real TOR
+### Step 10: see it on a real TOR
 
-You need your key in `.env` and at least one TOR with a `tor_texts` row (from branch 90).
+With your key in `.env` and a TOR that has `tor_texts`:
 
 ```sh
-bun run dev                       # tab 1
+bun run dev
 curl -X POST localhost:8003/api/grade/run -H 'content-type: application/json' -d '{"limit":1}'
-curl localhost:8003/api/grade/status
+# wait ~1 minute, then find the TOR's id in Compass and:
+curl localhost:8003/api/tors/<id> | jq .summaryPoints
 ```
 
-Then, in MongoDB Compass, open that TOR in `tors` and check:
-- [ ] `graderModel` is `vertex:gemini-2.5-flash`, and `graderVersion` is `2`
-- [ ] every fired finding has an `evidence` quote you can find (Ctrl+F) in that TOR's `tor_texts.fullText`
-- [ ] every fired finding has a `filename`
+Check:
+- [ ] up to 8 points, in Thai, each one a fact from the document (figures, deadlines, requirements)
+- [ ] **no** point that judges: nothing about fair/unfair, restrictive, suspicious, or advice to bidders
+- [ ] most points have a `filename`, and it's one of the TOR's real PDFs
+- [ ] in Compass, the TOR has `summaryModel: "vertex:gemini-2.5-flash"` and `summaryVersion: 2`
 
-Expect about 20 seconds per Gemini call. It costs money per call, so grade a handful, not hundreds, while testing.
-
----
-
-## Something to think about (and discuss)
-
-On a real TOR, `NOENTITY` **fired**, with the quote *"เป็นบุคคลธรรมดาหรือนิติบุคคล…"*. But that quote shows the TOR *does* ask for a juristic person, and the rule means "the requirement is **missing**".
-
-The prompt asks "does the document **contain** such a clause?", and that question doesn't fit rules that are about something being *absent*. (The old Ollama prompt had the same problem.) How would you fix it: change the rule's `definition`, add a field to `RuleSpec`, or phrase the prompt differently for absence rules? Try one, and grade the same TOR again.
+If a judgemental point gets through, don't just edit the prompt. Add the phrase to `EVALUATIVE_MARKERS` in `summaryGuard.ts` and write a test for it. The screen is the thing that can't be talked around.
 
 ---
 
@@ -176,9 +144,8 @@ The prompt asks "does the document **contain** such a clause?", and that questio
 
 Write your attempt first, then ask for **hints**:
 
-- *"Here's my `callGemini` and the failing test output. What's the test expecting that I'm not doing? One sentence, no code."*
-- *"What does `AbortController` do? Give a 5-line example unrelated to my code."*
-- *"Why would checking a quote with `includes` fail when the only difference is spaces? Don't give me code."*
-- *"Here's my `keepVerifiedFindings`. Which of the four cases in the comment am I handling wrong?"*
+- *"Here's my `parseSummary` and the failing test. Which case am I missing? Don't write the fix."*
+- *"Read my summary prompt. Is there any way it still invites the model to judge the document? List the risky phrases only."*
+- *"What does `enum` do in a JSON schema? Tiny example, not my code."*
 
-When all six criteria pass: commit, push, and open a PR. Then move on to `feat/92/tor-ai-summary`.
+When all seven criteria pass: commit, push, and open a PR. That completes the Vertex migration. 🎉
