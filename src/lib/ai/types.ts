@@ -103,3 +103,22 @@ export function isVerbatim(evidence: string, haystack: string): boolean {
   const strip = (s: string) => s.replace(/\s+/g, "");
   return strip(haystack).includes(strip(evidence));
 }
+
+/**
+ * TODO(feat/91) — see LEARNING.md step 3.
+ *
+ * WHERE in `haystack` does `quote` start? Same whitespace-insensitive match as
+ * isVerbatim above, but return the character POSITION in the ORIGINAL
+ * haystack, or -1 when not found (or when the quote is blank).
+ *
+ * Hints:
+ *   - Try haystack.indexOf(quote) first — usually that is enough.
+ *   - If it misses, the difference is whitespace. Walk the haystack one
+ *     character at a time, building a copy WITHOUT whitespace, and remember
+ *     for each kept character where it was in the original (an array of
+ *     numbers). Find the stripped quote in the stripped copy, then use that
+ *     array to translate the position back.
+ */
+export function locateQuote(quote: string, haystack: string): number {
+  throw new Error("TODO(feat/91): locateQuote — see LEARNING.md step 3");
+}

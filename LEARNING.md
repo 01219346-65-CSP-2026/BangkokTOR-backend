@@ -1,190 +1,184 @@
-# feat/90: PDF extraction (whole text instead of chunks)
+# feat/91: AI classification (the grading rulebook on Vertex AI)
 
-> **You write the code on this branch.** This file tells you what to build, in which order, and how you know you're done. The tests are the spec. When they're all green, the branch is finished.
+> **You write the code on this branch.** The tests are the spec. When they're all green, the branch is done.
 >
-> First time here? Do the setup in [`docs/learning/README.md`](docs/learning/README.md), and keep [`docs/learning/syntax-cheatsheet.md`](docs/learning/syntax-cheatsheet.md) open while you work.
+> **Before you start:** bring your finished branch 90 in, since this branch needs `tor_texts`:
+> ```sh
+> git switch feat/91/ai-classification
+> git merge feat/90/pdf-extraction
+> ```
+> Setup and syntax help: [`docs/learning/`](docs/learning/README.md).
 
 ---
 
 ## Why this branch exists
 
-A TOR arrives as a `.zip` full of PDFs. Before any AI can read it, we turn the PDFs into text.
+Every TOR is graded against a **rulebook** of 15 rules (`src/lib/grade/rules.ts`), for example:
+- `PENALTY`: a late-delivery fine clause (unfair when above 0.2% a day);
+- `NOENTITY`: the document doesn't require a registered company.
 
-**Today** the text is cut into **chunks** of about 6,000 characters (at most 24 per TOR) and saved in the `tor_chunks` collection. That was only needed because the old local AI could read about 6,000 characters at a time.
+Two rules are checked by plain code (`IDMISMATCH`, `BUDGETMISMATCH`). Most of the rest need an AI to *read* the document.
 
-**We're switching to Google Vertex AI (Gemini)**, which reads about a million tokens at once. So the goal of this branch is:
+**Today** that AI is a small local model (Ollama). It reads one 6,000-character chunk at a time, so each TOR needs about 40 calls. A "router" (`src/lib/ai/route.ts`) guesses which chunks to send for which rule.
 
-> Store the **whole readable text of a TOR in one field**, in a new `tor_texts` collection. No more chunks.
+**Now** branch 90 gives us the whole text in one field, and Gemini can read all of it. So:
 
-There's also a bug to fix along the way. The PDF reader keeps **list** and **table** text in a different place from paragraphs, and the current code never looks there. On a real TOR it keeps 14,213 characters out of 45,185. Your version must read lists and tables too; the tests check this.
+> For each phase (legitimacy, then fairness), send **all its rules + the whole text in ONE Gemini call**, and get back one `{ code, present, quote }` per rule.
 
-## The flow you're changing
+### The one rule you must not break: never trust the AI
+
+The AI can invent a quote. So a rule only counts as **fired** if its quote really appears in the document (`isVerbatim` in `types.ts`). This check happens twice: once when the answer comes back (`keepVerifiedFindings`), and again before anything is saved (`grade.service.ts`). A made-up quote is thrown away, never stored.
+
+### How Gemini is called
+
+With a plain `fetch`. There's no SDK and no service account. Your Vertex "express mode" key goes in the URL:
 
 ```
-data/blobs/xxxx.zip
-  │ unzipBundle()   src/lib/extract/unzip.ts    (already works, don't touch)
-  ▼
-  │ loadBundle()    src/lib/extract/loader.ts   (already works; PDF → JSON tree)
-  ▼
-  │ triageBundle()  src/lib/extract/triage.ts   (already works; keeps readable PDFs, best first)
-  ▼
-  │ chunkDocuments()  ✗ REMOVE                   →  buildFullText()  ★ YOU WRITE
-  ▼
-  │ ChunkModel.insertMany()  ✗ REMOVE            →  TorTextModel.updateOne(upsert)  ★ YOU WRITE
-  ▼
-MongoDB: tor_chunks ✗                            →  tor_texts ★
+POST https://aiplatform.googleapis.com/v1/publishers/google/models/gemini-2.5-flash:generateContent?key=YOUR_KEY
 ```
 
-All of this runs inside `processBundle()` in `src/modules/extract/extract.service.ts`. Read that function once before you start.
+We send a **JSON schema** along with the prompt, and Gemini is forced to answer in exactly that shape. That means there's no free text to pick apart, just `JSON.parse`.
 
 ---
 
-## Passing criteria (the branch is done when ALL of these are true)
+## Passing criteria (ALL must be true)
 
 | # | Check | Command |
 |---|---|---|
-| 1 | Unit tests for your text builder are green | `bun test src/lib/extract/fulltext.test.ts` |
-| 2 | The wiring checklist is green | `bun test checklist/90` |
-| 3 | The API serializer tests are green | `bun test src/modules/tor` |
+| 1 | The Vertex module spec is green | `bun test src/lib/ai/vertex.test.ts` |
+| 2 | The wiring checklist is green | `bun test checklist/91` |
+| 3 | Branch 90 is still green | `bun test checklist/90` |
 | 4 | **Every** test in the repo is green | `bun test` |
-| 5 | TypeScript is happy | `bun run typecheck` (no errors) |
-| 6 | It works on real data | run the extract worker once, then check `tor_texts` in MongoDB Compass (step 8) |
+| 5 | TypeScript is happy | `bun run typecheck` |
+| 6 | It works for real | one real TOR graded with your key (step 11) |
 
-Right now most of these fail. That's expected. Work through the steps and watch them turn green.
+Tests 1–5 never call Google. They use a fake `fetch`, so they're free and don't need a key.
 
 ---
 
 ## Steps
 
-Do them in order. Each one says which test turns green when you're done.
+### Step 1: settings
 
-### Step 1: teach the `LoaderNode` type about lists and tables
+- `src/config/env.ts`: add `vertexApiKey` (from `VERTEX_API_KEY`, default `""`) and `vertexModel` (from `VERTEX_MODEL`, default `"gemini-2.5-flash"`).
+- `.env.example`: add `VERTEX_API_KEY=` (**empty**, because this file is committed) and `VERTEX_MODEL=gemini-2.5-flash`, with a comment on where to get a key.
+- Your own `.env`: put your real key there. `.env` is git-ignored. **Never** paste a key anywhere else.
 
-**File:** `src/lib/extract/loader.ts` → the `LoaderNode` type.
+✅ `bun test checklist/91`: step 1.
 
-Open any file in `data/extracted/<number>/_json/` (or print one with `bun -e`) and find a node with `"type": "list"` and one with `"type": "table"`. Notice where their text actually lives:
-- a list keeps it in `"list items"`, which is an array of nodes;
-- a table keeps it in `rows`, and each row has `cells`, which are nodes with `kids`.
+### Step 2: change the types
 
-Add both as **optional** fields on `LoaderNode`. The field name `"list items"` has a space in it, so it needs quotes.
+**File:** `src/lib/ai/types.ts`
 
-✅ `bun test checklist/90`: "step 1" passes.
+- `RuleFinding`: remove `chunkIndex` and add `checked: boolean` plus `filename: string | null`.
+- `GradeInput`: becomes `{ rules, text, files }`. `text` is the full text and `files` is the `FileSpan[]` from branch 90.
+- `Grader`: rename the method from `gradeChunks(...)` to `grade(input: GradeInput)`.
 
-### Step 2: write `pdfToText`, `buildFullText`, `fileAt`
+Then run `bun run typecheck`. The errors it lists are your to-do list for steps 7–10.
 
-**File:** `src/lib/extract/fulltext.ts`. The types are given; the three function bodies are yours. Each function has hints above it.
+✅ `bun test checklist/91`: both step 2 checks.
 
-Suggested order:
-1. `fileAt`: the smallest. Get its test green first.
-2. `pdfToText`: you'll want a helper function that calls itself for each child node (recursion). Start with paragraphs only, then add lists, then tables. There's one test for each.
-3. `buildFullText`: uses `pdfToText`. The trickiest parts are the `start`/`end` offsets and the size cap. Draw it on paper:
-   ```
-   "=== FILE: a.pdf ===\nAAA" + "\n\n" + "=== FILE: b.pdf ===\nBBB"
-    ^0                    ^23   (sep)    ^25                   ^48
-   ```
+### Step 3: `locateQuote`
 
-✅ `bun test src/lib/extract/fulltext.test.ts`: all 11 pass.
+**File:** `src/lib/ai/types.ts` (the stub is at the bottom). It finds *where* a quote sits in the text, even when the spacing differs. You need this so you can tell which PDF a quote came from.
 
-### Step 3: create the `tor_texts` model
+✅ `bun test src/lib/ai/vertex.test.ts -t "step 3"`
 
-**Create:** `src/modules/extract/torText.model.ts`
-**Copy the pattern from:** `src/modules/extract/extraction.model.ts` (same imports, same `new Schema(...)`, `model(...)` shape).
+### Step 4: `callGemini` and `assertVertexConfig`
 
-Fields:
+**File:** `src/lib/ai/vertex.ts`. The comment above `callGemini` shows the exact request and reply shapes. The tests replace `fetch` with a fake, so read them to see exactly what's expected. Order inside `callGemini`:
+1. `assertVertexConfig()` (throws if there's no key, so `fetch` is never reached);
+2. `fetch(url, { method: "POST", headers, body: JSON.stringify(...) , signal })`;
+3. `!response.ok` → throw (include the status, **not** the URL, because the URL contains the key);
+4. read the JSON, check `promptFeedback.blockReason` and `candidates[0].finishReason === "STOP"`;
+5. `JSON.parse` the text of `candidates[0].content.parts`, and throw a clear error if it fails.
 
-| field | type | notes |
-|---|---|---|
-| `torId` | ObjectId, ref `"Tor"` | required |
-| `projectId` | String | required |
-| `documentId` | ObjectId, ref `"Document"` | required, the bundle it came from |
-| `fullText` | String | required |
-| `chars` | Number | required |
-| `truncated` | Boolean | default `false` |
-| `files` | array of `{ filename, pages, start, end }` | `_id: false` on the sub-object, default `[]` |
+✅ `bun test src/lib/ai/vertex.test.ts -t "step 4"`
 
-Options: `{ timestamps: true, versionKey: false, collection: "tor_texts" }`.
-Index: `torId` **unique**, because there's exactly one text per TOR.
-Export `TorTextModel`, plus a `TorTextLean` type the way the other models do.
+### Step 5: the three pure helpers
 
-✅ `bun test checklist/90`: "step 3" passes.
+**File:** `src/lib/ai/vertex.ts`
 
-### Step 4: add the `MAX_FULLTEXT_CHARS` setting
+- `gradeSchema(codes)`: the answer shape. `code` must be an `enum` of `codes`, so the model can't invent rules.
+- `buildGradePrompt(rules, text)`: **define** each rule; don't just name it. We measured this on the old model: asking about a bare rule name scored 0/3, while giving the definition scored 3/3. Include the definition, `unfairWhen` and the cue words, demand a WORD-FOR-WORD quote of at most `MAX_EVIDENCE_CHARS` characters (at 200 characters the old model quoted exactly; longer quotes drifted into paraphrase), and append the whole text.
+- `keepVerifiedFindings(raw, rules, text, files)`: the gate. The comment above it lists all four cases. Loop over **your** rules, not the model's answers, so every rule gets exactly one finding.
 
-- `src/config/env.ts`: add `maxFulltextChars: Number(process.env.MAX_FULLTEXT_CHARS ?? 400_000)` next to `extractDir`.
-- `.env.example`: add `MAX_FULLTEXT_CHARS=400000`, with a one-line comment explaining it.
+✅ `bun test src/lib/ai/vertex.test.ts -t "step 5"`
 
-Why a cap: every stored character is sent to a paid AI later. 400,000 is generous, and 2 of our 5 test bundles hit it.
+### Step 6: `createVertexGrader`
 
-✅ `bun test checklist/90`: "step 4" passes.
+It glues steps 4 and 5 together: one `callGemini` per `grade()`, with a timeout (`AbortController` + `setTimeout(..., env.aiTimeoutMs)`, cleared in `finally`).
 
-### Step 5: save the whole text in `processBundle`
+✅ `bun test src/lib/ai/vertex.test.ts` is fully green.
 
-**File:** `src/modules/extract/extract.service.ts`
+### Step 7: use it
 
-1. Replace the `chunkDocuments(...)` + `ChunkModel.deleteMany/insertMany` block with:
-   - `const full = buildFullText(triaged.readable, env.maxFulltextChars);`
-   - if `full.chars === 0`, mark the TOR incomplete with reason `"no-text"` and return (look at how `"scanned-only"` is handled just above);
-   - `TorTextModel.updateOne({ torId: row.torId }, { $set: {...every field...} }, { upsert: true })`.
-     **upsert** means "update it, or create it if it doesn't exist", so running extraction twice never makes two copies.
-2. In `src/modules/extract/extraction.model.ts`, rename the `chunkCount` field to `textChars`. Then fix every place TypeScript now complains about (`bun run typecheck` lists them). Set `textChars: full.chars`.
-3. In `getExtractStatus()`, count `TorTextModel` documents instead of chunks.
+`src/lib/ai/index.ts` → `createGrader()` always returns `createVertexGrader()`. The summarizer keeps its `AI_PROVIDER` switch until branch 92.
 
-✅ `bun test checklist/90`: both "step 5" checks pass.
+### Step 8: grade the stored text
 
-### Step 6: point the readers at `tor_texts`
+**File:** `src/modules/grade/grade.service.ts` → `gradeTor`
 
-Two places still read chunks:
+1. Remove the branch 90 "one chunk" bridge. Use `stored.fullText` and `stored.files` directly.
+2. `checkDeterministic(tor, text)` searches the full text instead of joined chunks.
+3. `grader.grade({ rules: aiRulesFor("legitimacy"), text, files })`, and the same for fairness.
+4. `toFindings(raw, text)`: the **second** gate. Re-check `isVerbatim(f.evidence, text)` and keep `checked` and `filename`.
+5. When saving `ruleFindings`, store `filename`.
+6. The summary still expects chunks until branch 92, so give it `[{ index: 0, headingPath: [], text }]` for now.
+7. Look at `findUngraded()`. Old TORs are already `"graded"` (version 1) and must be regraded **without** leaving the public list. Make it pick up both `extraction_pending` TORs and `graded` TORs whose `graderVersion` is older than the current one, but only TORs that have a `tor_texts` row (`TorTextModel.distinct("torId")`).
 
-- **`src/modules/tor/tor.service.ts`** → `getTorDetail`: load `TorTextModel.findOne({ torId: tor._id })` instead of the chunks. Only `documentId` and `files` are needed, so use `.select("documentId files")`, which stops Mongo from sending the big text.
-- **`src/modules/tor/tor.serialize.ts`** → `serializeDetail(tor, documents, text)`: the third argument is now that row (or `null`).
-  - A document's `pages` = the **sum** of `files[].pages` for the bundle it came from.
-  - Summary points get `filename: null, pageStart: 0, pageEnd: 0` for now (branch 92 brings citations back).
-  - The tests in `src/modules/tor/tor.serialize.test.ts` are already updated. Make them pass.
-- **`src/modules/grade/grade.service.ts`** → `gradeTor`: load the `TorTextModel` row. If there isn't one, mark the TOR `extraction_incomplete` with reason `"no-text"`. The grader still expects chunks until branch 91, so hand it **one** chunk for now: `[{ index: 0, headingPath: [], text: stored.fullText }]`. Leave a comment saying branch 91 replaces this.
+✅ `bun test checklist/91`: step 8.
 
-✅ `bun test src/modules/tor` and `bun test checklist/90`: "step 6" passes.
+### Step 9: storage and API
 
-### Step 7: delete the chunk code
+- `src/modules/tor/tor.model.ts`: `GRADER_VERSION = 2`, and add `filename` to the `ruleFindings` sub-document. Keep `chunkIndex` so old rows still load.
+- `src/lib/grade/score.ts`: add `filename?: string | null` to `Finding`.
+- `src/modules/tor/tor.serialize.ts` → `serializeGrade`: include `filename` in each finding.
 
-Delete `src/lib/extract/chunk.ts`, `src/lib/extract/chunk.test.ts` and `src/modules/extract/chunk.model.ts`. Then run `bun run typecheck` and fix anything still importing them (`monitor.service.ts` reads `chunkCount`; make it `textChars`).
+✅ `bun test checklist/91`: the step 9 checks.
 
-✅ `bun test checklist/90` is fully green. `bun run typecheck` shows no errors. `bun test` is fully green.
+### Step 10: clean up
 
-### Step 8: try it on real data
+- Delete `src/lib/ai/route.ts` and `src/lib/ai/route.test.ts`, since there are no chunks left to route.
+- In `src/lib/ai/ollama.ts`, delete the grader half (`buildPrompt`, `askOne`, `createOllamaGrader`) and keep the summarizer for now.
+- `src/grade-worker.ts`: call `assertVertexConfig()` at startup, and log `env.vertexModel`.
 
-With Mongo running (`docker compose up -d mongo`) and `MONGODB_URI=mongodb://localhost:27017` in `.env`:
+✅ `bun test`: everything green. `bun run typecheck`: no errors.
+
+### Step 11: grade one real TOR
+
+You need your key in `.env` and at least one TOR with a `tor_texts` row (from branch 90).
 
 ```sh
-bun run dev              # tab 1
-bun run worker           # tab 2 — downloads a bundle or two, then Ctrl+C
-bun run extract-worker   # tab 3
-curl -X POST localhost:8003/api/extract/run -H 'content-type: application/json' -d '{"limit":2}'
+bun run dev                       # tab 1
+curl -X POST localhost:8003/api/grade/run -H 'content-type: application/json' -d '{"limit":1}'
+curl localhost:8003/api/grade/status
 ```
 
-Open **MongoDB Compass** → `bangkoktor` → `tor_texts`, then check:
-- [ ] one document per TOR, with a `fullText` that starts with `=== FILE: `
-- [ ] `files[i].start`/`end` line up: the text at `start` is that file's header
-- [ ] `chars` equals the length of `fullText`
-- [ ] no new documents appear in `tor_chunks`
+Then, in MongoDB Compass, open that TOR in `tors` and check:
+- [ ] `graderModel` is `vertex:gemini-2.5-flash`, and `graderVersion` is `2`
+- [ ] every fired finding has an `evidence` quote you can find (Ctrl+F) in that TOR's `tor_texts.fullText`
+- [ ] every fired finding has a `filename`
+
+Expect about 20 seconds per Gemini call. It costs money per call, so grade a handful, not hundreds, while testing.
 
 ---
 
-## Stretch (worth doing before this goes to production)
+## Something to think about (and discuss)
 
-These two aren't covered by tests. They matter because the live database already has TORs that were extracted the old way.
+On a real TOR, `NOENTITY` **fired**, with the quote *"เป็นบุคคลธรรมดาหรือนิติบุคคล…"*. But that quote shows the TOR *does* ask for a juristic person, and the rule means "the requirement is **missing**".
 
-- **Re-extract old TORs.** Their `extraction_queue` rows already say `done`, so nothing will ever redo them. In `enqueuePending()`, set those rows back to `pending` when their `torId` has no `tor_texts` row yet (only if `digitalCount > 0`). Hint: `TorTextModel.distinct("torId")` and `$nin`.
-- **Don't hide graded TORs.** The public list only shows `graded` TORs. Re-extracting sets a TOR back to `extraction_pending`, which would make it vanish. Only change the status when it isn't already `"graded"` (`{ _id: row.torId, status: { $ne: "graded" } }`).
+The prompt asks "does the document **contain** such a clause?", and that question doesn't fit rules that are about something being *absent*. (The old Ollama prompt had the same problem.) How would you fix it: change the rule's `definition`, add a field to `RuleSpec`, or phrase the prompt differently for absence rules? Try one, and grade the same TOR again.
 
 ---
 
 ## Using AI to help (without having it write the code for you)
 
-Write your attempt first. When you're stuck, paste your code and **the failing test output** and ask for a *hint*, not a solution. Prompts that work well:
+Write your attempt first, then ask for **hints**:
 
-- *"Here's my `pdfToText` and the failing test. Don't fix it. Tell me in one sentence which case I'm not handling."*
-- *"Explain what `{ upsert: true }` does in Mongoose `updateOne`, with a tiny example that isn't my code."*
-- *"I get this TypeScript error: `<paste>`. What does it mean? Don't rewrite my code."*
-- *"Review my `buildFullText` for off-by-one mistakes in start/end. Point to the line, don't rewrite it."*
+- *"Here's my `callGemini` and the failing test output. What's the test expecting that I'm not doing? One sentence, no code."*
+- *"What does `AbortController` do? Give a 5-line example unrelated to my code."*
+- *"Why would checking a quote with `includes` fail when the only difference is spaces? Don't give me code."*
+- *"Here's my `keepVerifiedFindings`. Which of the four cases in the comment am I handling wrong?"*
 
-When all six passing criteria hold, commit, push, and open a PR into `main`. Then move on to `feat/91/ai-classification`.
+When all six criteria pass: commit, push, and open a PR. Then move on to `feat/92/tor-ai-summary`.
