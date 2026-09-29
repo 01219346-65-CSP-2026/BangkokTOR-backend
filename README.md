@@ -78,6 +78,9 @@ bun run grade-worker    # needs Ollama on :11434
 
 Checks: `bun run typecheck`, `bun test`.
 
+Working on a `feat/9x` branch? Start with [`LEARNING.md`](LEARNING.md). Machine setup is in
+[`docs/learning/`](docs/learning/README.md).
+
 ## API
 
 Everything is JSON. Reads are open; writes are not — see Access control.

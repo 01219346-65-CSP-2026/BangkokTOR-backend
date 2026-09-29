@@ -91,54 +91,50 @@ describe("serialize — the FR-19 gate", () => {
   });
 });
 
-// Fixtures for serializeDetail. The chunk is what a bullet's chunkIndex
-// resolves against, which is how a generated point gets a page citation.
-function chunk(overrides: Record<string, unknown> = {}) {
+// Fixture for serializeDetail: a stored tor_texts row. Only documentId and
+// files are read by the serializer; fullText is here to prove it never ships.
+const BUNDLE_ID = new Types.ObjectId();
+function text(overrides: Record<string, unknown> = {}) {
   return {
-    _id: new Types.ObjectId(),
-    torId: new Types.ObjectId(),
-    documentId: new Types.ObjectId(),
-    projectId: "67119569806",
-    filename: "doc_S50610000092.pdf",
-    index: 3,
-    headingPath: ["ร่าง", "๖. คุณสมบัติ"],
-    text: "ผู้ยื่นข้อเสนอต้องมีผลงานการดำเนินโครงการไม่น้อยกว่า 5 ปี",
-    chars: 57,
-    pageStart: 4,
-    pageEnd: 5,
+    documentId: BUNDLE_ID,
+    fullText: "=== FILE: doc_S50610000092.pdf ===\nผู้ยื่นข้อเสนอต้องมีผลงานการดำเนินโครงการไม่น้อยกว่า 5 ปี",
+    files: [
+      { filename: "doc_S50610000092.pdf", pages: 12, start: 0, end: 90 },
+      { filename: "Attach_TOR_1.pdf", pages: 5, start: 92, end: 200 },
+    ],
     ...overrides,
   } as never;
 }
 
 describe("serializeDetail — summary points", () => {
-  test("emits summary points and no document chunk text at all", () => {
+  test("emits summary points and no document text at all", () => {
     const out = serializeDetail(
       tor({
         summaryBullets: [{ text: "กำหนดยื่นข้อเสนอภายใน 11 ม.ค. 2568", chunkIndex: 3 }],
       }),
       [],
-      [chunk()],
+      text(),
     );
 
     expect(out.summaryPoints).toHaveLength(1);
-    // The whole point of the change: the chunk's text must not ship.
+    // The stored full text must not ship — the PDF is linked instead.
     const json = JSON.stringify(out);
     expect(json).not.toContain("ผู้ยื่นข้อเสนอต้องมีผลงาน");
     expect(json).not.toContain("extractedSections");
   });
 
-  test("a point resolves to its filename and page range", () => {
+  test("a point carries no citation until the summarizer names its file (feat/92)", () => {
     const out = serializeDetail(
       tor({ summaryBullets: [{ text: "วางหลักประกันซองร้อยละ 5", chunkIndex: 3 }] }),
       [],
-      [chunk()],
+      text(),
     );
 
     expect(out.summaryPoints[0]).toMatchObject({
       text: "วางหลักประกันซองร้อยละ 5",
-      filename: "doc_S50610000092.pdf",
-      pageStart: 4,
-      pageEnd: 5,
+      filename: null,
+      pageStart: 0,
+      pageEnd: 0,
     });
   });
 
@@ -156,7 +152,7 @@ describe("serializeDetail — summary points", () => {
         ],
       }),
       [],
-      [chunk()],
+      text(),
     );
 
     expect(out.summaryPoints).toHaveLength(1);
@@ -164,29 +160,28 @@ describe("serializeDetail — summary points", () => {
   });
 
   test("a TOR with no summary serializes an empty list rather than throwing", () => {
-    expect(serializeDetail(tor({ summaryBullets: [] }), [], []).summaryPoints).toEqual([]);
+    expect(serializeDetail(tor({ summaryBullets: [] }), [], null).summaryPoints).toEqual([]);
     // Rows predating the field entirely.
-    expect(serializeDetail(tor({ summaryBullets: undefined }), [], []).summaryPoints).toEqual([]);
+    expect(serializeDetail(tor({ summaryBullets: undefined }), [], null).summaryPoints).toEqual([]);
   });
 
-  test("a point whose chunk no longer exists keeps its text but loses the citation", () => {
-    // Re-extraction renumbers chunks, so a stored chunkIndex can dangle. The
-    // statement is still true; it just cannot be cited.
-    const out = serializeDetail(
-      tor({ summaryBullets: [{ text: "กำหนดส่งมอบภายใน 180 วัน", chunkIndex: 99 }] }),
-      [],
-      [chunk()],
-    );
-
-    expect(out.summaryPoints[0]).toMatchObject({
-      text: "กำหนดส่งมอบภายใน 180 วัน",
-      filename: null,
-      pageStart: 0,
-    });
+  test("a bundle's page count is the sum of its readable PDFs", () => {
+    const bundle = {
+      _id: BUNDLE_ID,
+      kind: "bundle",
+      filename: "bundle.zip",
+      url: "https://example.test/bundle.zip",
+      textLayer: "digital",
+      fetchedAt: null,
+    } as never;
+    const out = serializeDetail(tor(), [bundle], text());
+    expect(out.documents[0]!.pages).toBe(17);
+    // No stored text yet: 0 pages, not a crash.
+    expect(serializeDetail(tor(), [bundle], null).documents[0]!.pages).toBe(0);
   });
 
   test("the grade stays private on the detail shape too", () => {
-    const json = JSON.stringify(serializeDetail(tor(), [], [chunk()]));
+    const json = JSON.stringify(serializeDetail(tor(), [], text()));
     expect(json).not.toContain("gradeScore");
     expect(json).not.toContain("42.5");
     expect(json).not.toContain("กรมอื่น");
