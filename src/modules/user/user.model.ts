@@ -4,7 +4,16 @@ import { Schema, model, Types, type InferSchemaType, type HydratedDocument } fro
 const userSchema = new Schema({
   google_id: { type: String, unique: true, sparse: true },
   email: { type: String, required: true, unique: true },
-  role: { 
+  // Mirrored from the Google profile on every sign-in (POST /api/user/sync),
+  // so a changed name or photo on the Google side is picked up next login.
+  email_verified: Boolean,
+  name: String,
+  given_name: String,
+  family_name: String,
+  avatar_url: String,
+  locale: String,
+  last_login_at: Date,
+  role: {
     type: String, 
     enum: ['admin', 'client', 'agency'], 
     default: 'client' 
