@@ -21,8 +21,22 @@ const userSchema = new Schema({
   profile: {
     description: String,
     budget_min: Number,
+    // null means "no maximum" — the top stop of the wizard's budget slider.
     budget_max: Number,
     team_size: Number,
+    // The skills wizard asks for a band, not a headcount. Kept beside the
+    // numeric `team_size` rather than replacing it, so neither loses meaning.
+    team_size_band: { type: String, enum: ['solo', 'small', 'medium', 'large', 'xlarge'] },
+    duration: { type: String, enum: ['short', 'medium', 'long', 'veryLong'] },
+    // How many contracts the team can run at once.
+    concurrent: Number,
+    notify: {
+      on_match: Boolean,
+      only_strong_fit: Boolean,
+      include_signals: Boolean,
+    },
+    // Set by PUT /api/me/profile. Absent means the user has never saved one.
+    updated_at: Date,
     tech_stacks: [{
       //builds the relationship to the TechStack 
       tech_stack_id: { type: Schema.Types.ObjectId, ref: 'TechStack' },

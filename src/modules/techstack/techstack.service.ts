@@ -14,6 +14,7 @@ import type {
   ListTechstacksQuery,
   UpdateTechstackBody,
 } from "./techstack.validation.ts";
+import { SKILL_VOCABULARY } from "./techstack.vocabulary.ts";
 
 export type PagedTechstacks = PageResult<TechstackJSON>;
 
@@ -78,7 +79,7 @@ export async function createTechstack(
     // `name` is unique. Without this the E11000 misses the instanceof check in
     // the error handler and surfaces as a 500.
     if (isDuplicateKey(err)) {
-      throw new HttpError(409, `Tech stack already exists: ${input.name}`);
+      throw new HttpError(409, `Tech stack name or slug already exists: ${input.name}`);
     }
     throw err;
   }
@@ -103,7 +104,7 @@ export async function updateTechstack(
     return serialize(doc);
   } catch (err) {
     if (isDuplicateKey(err)) {
-      throw new HttpError(409, `Tech stack already exists: ${input.name}`);
+      throw new HttpError(409, `Tech stack name or slug already exists`);
     }
     throw err;
   }
@@ -113,4 +114,37 @@ export async function deleteTechstack(id: string): Promise<void> {
   assertValidId(id);
   const doc = await TechstackModel.findByIdAndDelete(id).lean<TechstackLean>().exec();
   if (!doc) throw new HttpError(404, `${TechstackModel.modelName} not found: ${id}`);
+}
+
+/**
+ * Make sure every skill the frontend wizard offers exists as a row, so a
+ * profile save never fails on a missing vocabulary entry. Runs at boot.
+ *
+ * Idempotent and non-destructive: rows are only ever inserted or given a slug,
+ * never renamed or deleted, so an admin's edits survive a restart.
+ */
+export async function ensureSkillVocabulary(): Promise<void> {
+  // Pass 1 — adopt rows an admin created by name before slugs existed.
+  // Without it, pass 2's insert would hit the unique index on `name`.
+  await TechstackModel.bulkWrite(
+    SKILL_VOCABULARY.map(({ slug, name, category }) => ({
+      updateOne: {
+        filter: { name, slug: { $exists: false } },
+        update: { $set: { slug, category } },
+      },
+    })),
+    { ordered: false },
+  );
+
+  // Pass 2 — insert whatever is still missing.
+  await TechstackModel.bulkWrite(
+    SKILL_VOCABULARY.map(({ slug, name, category }) => ({
+      updateOne: {
+        filter: { slug },
+        update: { $setOnInsert: { slug, name, category, created_at: new Date() } },
+        upsert: true,
+      },
+    })),
+    { ordered: false },
+  );
 }

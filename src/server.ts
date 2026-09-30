@@ -1,6 +1,7 @@
 import { createApp } from "./app.ts";
 import { assertServeConfig, env } from "./config/env.ts";
 import { connectMongo, disconnectMongo } from "./db/mongo.ts";
+import { ensureSkillVocabulary } from "./modules/techstack/techstack.service.ts";
 
 export async function start() {
   // Before the DB connection, so a misconfigured production deploy fails with
@@ -8,6 +9,12 @@ export async function start() {
   assertServeConfig();
 
   await connectMongo();
+
+  // The skills wizard's vocabulary must exist before a profile can reference
+  // it. Logged, not fatal: the API still serves TORs if this fails.
+  await ensureSkillVocabulary().catch((err) => {
+    console.error("Could not seed the skill vocabulary:", err);
+  });
 
   const server = createApp().listen(env.port, () => {
     console.log(`Server listening on http://localhost:${env.port} (${env.nodeEnv})`);
