@@ -70,7 +70,7 @@ describe("normalizeCkanRow — the shifted live row, end to end", () => {
   test("identity and provenance", () => {
     expect(tor.sourceId).toBe(SOURCE_ID);
     expect(tor.projectId).toBe("67039549408");
-    expect(tor.sourceUrl).toContain("proj_id=67039549408");
+    expect(tor.sourceUrl).toContain("keywordSearch=67039549408");
     expect(tor.fetchedAt).toBeInstanceOf(Date);
   });
 
@@ -178,5 +178,66 @@ describe("isUsableRow", () => {
   test("rejects a row that cannot be joined to e-GP", () => {
     expect(isUsableRow({ "ชื่อโครงการ": "x" })).toBe(false);
     expect(isUsableRow({ "รหัสโครงการ": "1" })).toBe(false);
+  });
+});
+
+// Resource 10 of the FY2568 package (2568-egp-contract-10, probed 2026-09-30).
+// Same defect, different spelling: the phantom headers carry a space, which an
+// exact-string match missed — so these rows used to go through unrealigned.
+const SPACED_FIELDS = ["_id", "ลำดับ", "รหัสโครงการ", "ชื่อโครงการ", "ชื่อประเภทโครงการ", "ชื่อหน่วยงาน", "ชื่อหน่วยงานย่อย", "วิธีจัดซื้อฯ", "กลุ่มวิธีจัดซื้อฯ", "วันที่ประกาศ", "งบประมาณ(บาท)", "ราคากลาง(บาท)", "ราคาตกลงซื้อ/จ้าง", "ปีงบประมาณ", "วันที่เกิดรายการ", "จังหวัด", "จังหวัด (Eng)", "เขต/อำเภอ", "เขต/อำเภอ (Eng)", "แขวง/ตำบล", "แขวง/ตำบล (Eng)", "สถานะโครงการ", "พิกัดของโครงการ", "ละติจูดโครงการ", "ลองจิจูดโครงการ", "เลขนิติบุคคล", "ชื่อผู้ชนะ", "เลขที่สัญญา", "วันที่ลงนามสัญญา", "วันที่สิ้นสุดสัญญา", "งบสัญญา(บาท)", "สถานะสัญญา"];
+
+const SPACED_ROW: CkanRow = {
+  "_id": 100001,
+  "ลำดับ": 4628582,
+  "รหัสโครงการ": 68069560212,
+  "ชื่อโครงการ": "ซื้อวัสดุอบรมให้ความรู้ ความเข้าใจเกี่ยวกับภารกิจของศูนย์เสมารักษ์สำนักงานศึกษาธิการจังหวัดกาญจนบุรีประจำปี พ.ศ.2568 โดยวิธีเฉพาะเจาะจง",
+  "ชื่อประเภทโครงการ": "ซื้อ",
+  "ชื่อหน่วยงาน": "สำนักงานปลัดกระทรวงศึกษาธิการ",
+  "ชื่อหน่วยงานย่อย": "สำนักงานศึกษาธิการจังหวัดกาญจนบุรี",
+  "วิธีจัดซื้อฯ": "วิธีการจัดหา ประกาศเชิญชวนทั่วไป คัดเลือก เฉพาะเจาะจง",
+  "กลุ่มวิธีจัดซื้อฯ": "เฉพาะเจาะจง",
+  "วันที่ประกาศ": "-",
+  "งบประมาณ(บาท)": 610,
+  "ราคากลาง(บาท)": 610,
+  "ราคาตกลงซื้อ/จ้าง": 610,
+  "ปีงบประมาณ": 2568,
+  "วันที่เกิดรายการ": "27 มิ.ย. 68",
+  "จังหวัด": "กาญจนบุรี",
+  "จังหวัด (Eng)": "เมืองกาญจนบุรี",
+  "เขต/อำเภอ": "ปากแพรก",
+  "เขต/อำเภอ (Eng)": "ระหว่างดำเนินการ",
+  "แขวง/ตำบล": "",
+  "แขวง/ตำบล (Eng)": "",
+  "สถานะโครงการ": "",
+  "พิกัดของโครงการ": "0713563000411",
+  "ละติจูดโครงการ": "ห้างหุ้นส่วนจำกัด พีเอสพี โอเค เซ็นเตอร์",
+  "ลองจิจูดโครงการ": "36/2568",
+  "เลขนิติบุคคล": "27 มิ.ย. 68",
+  "ชื่อผู้ชนะ": "4 ก.ค. 68",
+  "เลขที่สัญญา": 610,
+  "วันที่ลงนามสัญญา": "ระหว่างดำเนินการ",
+  "วันที่สิ้นสุดสัญญา": null,
+  "งบสัญญา(บาท)": null,
+  "สถานะสัญญา": null,
+};
+
+describe("the spaced phantom header variant (resource 10)", () => {
+  const raw: RawProject = { projectId: "68069560212", fields: SPACED_ROW, header: SPACED_FIELDS };
+  const extras = normalizeExtras(raw);
+
+  test("is detected and realigned", () => {
+    expect(alignRow(SPACED_ROW, SPACED_FIELDS)).not.toBe(SPACED_ROW);
+  });
+
+  test("status, district and winner land under their own keys", () => {
+    expect(extras.projectStatus).toBe("ระหว่างดำเนินการ");
+    expect(extras.district).toBe("เมืองกาญจนบุรี");
+    expect(extras.subdistrict).toBe("ปากแพรก");
+    expect(extras.winnerName).toBe("ห้างหุ้นส่วนจำกัด พีเอสพี โอเค เซ็นเตอร์");
+    expect(extras.contractNumber).toBe("36/2568");
+  });
+
+  test("empty coordinates stay empty rather than becoming a tax id", () => {
+    expect(extras.location).toBeUndefined();
   });
 });

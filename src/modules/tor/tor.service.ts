@@ -3,6 +3,7 @@ import { isValidObjectId, type QueryFilter } from "mongoose";
 import { env } from "../../config/env.ts";
 import { ChunkModel } from "../extract/chunk.model.ts";
 import { DocumentModel } from "../ingest/document.model.ts";
+import type { WorkTypeId } from "../../lib/classify/workType.ts";
 import { serialize, serializeDetail, serializeGrade } from "./tor.serialize.ts";
 import {
   TOR_CATEGORIES,
@@ -23,7 +24,10 @@ export type ListInput = {
   agency?: string;
   category?: (typeof TOR_CATEGORIES)[number];
   method?: (typeof TOR_METHODS)[number];
-  isSoftware?: boolean;
+  /** สถานะโครงการ exactly as the portal ships it — the options come from getStats(). */
+  projectStatus?: string;
+  /** One software work type (lib/classify/workType.ts); matches TORs carrying it. */
+  workType?: WorkTypeId;
   province?: string;
   minBudget?: number;
   maxBudget?: number;
@@ -66,8 +70,38 @@ const SORTS: Record<(typeof TOR_SORTS)[number], Record<string, 1 | -1>> = {
  *  choosing that option returns. */
 const LISTED = { $in: ["graded", "published", "documents_fetched"] as TorStatus[] };
 
+/*
+ * What the website is about: software work from the current fiscal year. Every
+ * public read — list, facets, stats, a single TOR — goes through this, so a
+ * row outside it is unreachable, not merely unlisted.
+ *
+ * "Current" is the newest fiscal year among the software TORs we hold, not a
+ * clock: data.go.th publishes a year months after it closes, so the calendar
+ * would point at a year with no rows. When discovery starts ingesting the next
+ * year, the site moves to it on its own.
+ */
+const SCOPE_TTL_MS = 5 * 60_000;
+let scopeCache: { fiscalYear: number | null; at: number } | null = null;
+
+async function currentFiscalYear(): Promise<number | null> {
+  if (scopeCache && Date.now() - scopeCache.at < SCOPE_TTL_MS) return scopeCache.fiscalYear;
+
+  const newest = await TorModel.findOne({ isSoftware: true, fiscalYear: { $ne: null } }, { fiscalYear: 1 })
+    .sort({ fiscalYear: -1 })
+    .lean();
+  scopeCache = { fiscalYear: newest?.fiscalYear ?? null, at: Date.now() };
+  return scopeCache.fiscalYear;
+}
+
+async function publicScope(): Promise<QueryFilter<Tor>> {
+  const fiscalYear = await currentFiscalYear();
+  return fiscalYear === null
+    ? { status: LISTED, isSoftware: true }
+    : { status: LISTED, isSoftware: true, fiscalYear };
+}
+
 export async function listTors(input: ListInput) {
-  const filter: QueryFilter<Tor> = {};
+  const filter: QueryFilter<Tor> = await publicScope();
 
   /*
    * What counts as a result.
@@ -82,14 +116,17 @@ export async function listTors(input: ListInput) {
    *
    * `published` stays in the $in for the day an editorial promotion step
    * exists. Nothing writes it today — see TOR_STATUSES in tor.model.ts.
+   *
+   * The status set, plus software-only and the current year, comes from
+   * publicScope() above.
    */
-  filter.status = LISTED;
 
   if (input.agency) filter.agency = input.agency;
   if (input.category) filter.category = input.category;
   if (input.method) filter.methodId = input.method;
   if (input.province) filter["location.province"] = input.province;
-  if (typeof input.isSoftware === "boolean") filter.isSoftware = input.isSoftware;
+  if (input.projectStatus) filter.projectStatus = input.projectStatus;
+  if (input.workType) filter.workTypes = input.workType;
 
   if (input.minBudget !== undefined || input.maxBudget !== undefined) {
     filter.budget = {};
@@ -200,14 +237,14 @@ async function listScored(filter: QueryFilter<Tor>, input: ListInput, skills: st
 
 export async function getTor(id: string) {
   if (!isValidObjectId(id)) return null;
-  const tor = await TorModel.findById(id).lean();
+  const tor = await TorModel.findOne({ _id: id, ...(await publicScope()) }).lean();
   return tor ? serialize(tor as TorLean) : null;
 }
 
 export async function getTorDetail(id: string) {
   if (!isValidObjectId(id)) return null;
 
-  const tor = await TorModel.findById(id).lean();
+  const tor = await TorModel.findOne({ _id: id, ...(await publicScope()) }).lean();
   if (!tor) return null;
 
   const [documents, chunks] = await Promise.all([
@@ -250,8 +287,9 @@ export async function getTorGrade(id: string) {
 }
 
 export async function listAgencies() {
+  const scope = await publicScope();
   const rows = await TorModel.aggregate<{ _id: string; count: number }>([
-    { $match: { status: LISTED, agency: { $nin: [null, ""] } } },
+    { $match: { ...scope, agency: { $nin: [null, ""] } } },
     { $group: { _id: "$agency", count: { $sum: 1 } } },
     { $sort: { count: -1 } },
   ]);
@@ -259,35 +297,52 @@ export async function listAgencies() {
 }
 
 export async function getStats() {
-  const [total, software, byCategory, byMethod, withSignals, top] = await Promise.all([
-    TorModel.countDocuments(),
-    TorModel.countDocuments({ isSoftware: true }),
+  const scope = await publicScope();
+  const facet = (field: string) =>
     TorModel.aggregate<{ _id: string | null; n: number }>([
-      { $match: { status: LISTED } },
-      { $group: { _id: "$category", n: { $sum: 1 } } },
+      { $match: scope },
+      { $group: { _id: `$${field}`, n: { $sum: 1 } } },
+      { $sort: { n: -1 } },
+    ]);
+
+  const [total, byCategory, byWorkType, byMethod, byProjectStatus, withSignals, top] = await Promise.all([
+    TorModel.countDocuments(scope),
+    facet("category"),
+    // Multi-label, so a TOR counts once under each of its work types — the
+    // counts are what choosing each option returns, and can sum past `total`.
+    TorModel.aggregate<{ _id: string; n: number }>([
+      { $match: scope },
+      { $unwind: "$workTypes" },
+      { $group: { _id: "$workTypes", n: { $sum: 1 } } },
       { $sort: { n: -1 } },
     ]),
-    TorModel.aggregate<{ _id: string | null; n: number }>([
-      { $match: { status: LISTED } },
-      { $group: { _id: "$methodId", n: { $sum: 1 } } },
-      { $sort: { n: -1 } },
-    ]),
-    TorModel.countDocuments({ signalCount: { $gt: 0 } }),
-    TorModel.findOne({ status: LISTED, budget: { $ne: null } }, { budget: 1 })
+    facet("methodId"),
+    facet("projectStatus"),
+    TorModel.countDocuments({ ...scope, signalCount: { $gt: 0 } }),
+    TorModel.findOne({ ...scope, budget: { $ne: null } }, { budget: 1 })
       .sort({ budget: -1 })
       .lean(),
   ]);
 
   return {
     total,
-    software,
+    // Every listed TOR is software now (publicScope). Kept so existing
+    // callers of the field don't break.
+    software: total,
+    fiscalYear: await currentFiscalYear(),
     // A count of documents carrying observations. Not a count of "suspicious"
     // tenders — that framing is the thing FR-19 forbids.
     withSignals,
-    // Both are over the listed rows only, so they are the filter rail's
-    // option counts as well.
+    // All over the listed rows only, so they are the filter rail's option
+    // counts as well.
     byCategory: byCategory.map((c) => ({ category: c._id, count: c.n })),
     byMethod: byMethod.map((m) => ({ method: m._id, count: m.n })),
+    byWorkType: byWorkType.map((w) => ({ workType: w._id, count: w.n })),
+    // สถานะโครงการ as the portal writes it — the dropdown's options come from
+    // the data, never from a hardcoded list.
+    byProjectStatus: byProjectStatus
+      .filter((p) => p._id)
+      .map((p) => ({ status: p._id as string, count: p.n })),
     // The budget slider's right edge.
     maxBudget: top?.budget ?? null,
   };

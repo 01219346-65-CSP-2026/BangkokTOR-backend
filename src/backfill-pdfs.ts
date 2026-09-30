@@ -1,3 +1,6 @@
+// OBSOLETE since 2026-09-30: extraction now deletes bundle zips once read
+// (extract.service.ts discardFiles), and this script needs them. It still runs
+// safely — rows whose zip is gone are skipped by the exists() check below.
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { env } from "./config/env.ts";

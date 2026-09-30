@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { Types } from "mongoose";
-import { serialize, serializeDetail, serializeGrade } from "./tor.serialize.ts";
+import { publicSourceUrl, serialize, serializeDetail, serializeGrade } from "./tor.serialize.ts";
 import type { TorLean } from "./tor.model.ts";
 
 function tor(overrides: Record<string, unknown> = {}): TorLean {
@@ -222,5 +222,49 @@ describe("serialize — required skills", () => {
 
   test("an untagged TOR has an empty list, not a missing field", () => {
     expect(serialize(tor()).requiredSkills).toEqual([]);
+  });
+});
+
+describe("publicSourceUrl", () => {
+  const NEW = "https://process5.gprocurement.go.th/egp-agpc01-web/announcement?keywordSearch=67119569806";
+
+  test("rewrites the retired process3 link to the announcement search", () => {
+    const old =
+      "https://process3.gprocurement.go.th/egp2procmainWeb/jsp/procsearch.sch?announceType=&proj_id=67119569806";
+    expect(serialize(tor({ sourceUrl: old })).sourceUrl).toBe(NEW);
+  });
+
+  test("fills an e-GP row that has no link at all", () => {
+    expect(publicSourceUrl({ sourceId: "ckan-egp", projectId: "67119569806", sourceUrl: "" })).toBe(NEW);
+  });
+
+  test("leaves other sources' links alone", () => {
+    const url = "https://egp2.bangkok.go.th/project-detail/abc";
+    expect(publicSourceUrl({ sourceId: "bangkok-egp2", projectId: "x", sourceUrl: url })).toBe(url);
+  });
+});
+
+describe("serializeDetail — extracted PDF links", () => {
+  const EGP_ZIP = "https://process5.gprocurement.go.th/egp-upload-service/v1/downloadFileTest?fileId=abc";
+
+  function pdf(localPath: string | null) {
+    return {
+      _id: new Types.ObjectId(),
+      kind: "extractedPdf",
+      filename: "tor.pdf",
+      url: EGP_ZIP,
+      localPath,
+    } as unknown as Parameters<typeof serializeDetail>[1][number];
+  }
+
+  test("a PDF still on disk is served by our own route", () => {
+    const t = tor();
+    const [doc] = serializeDetail(t, [pdf("./data/extracted/1/tor.pdf")], []).documents;
+    expect(doc!.url).toBe(`/api/tors/${String(t._id)}/documents/${doc!.id}/file`);
+  });
+
+  test("once extraction has deleted it, the row links to the e-GP bundle", () => {
+    const [doc] = serializeDetail(tor(), [pdf(null)], []).documents;
+    expect(doc!.url).toBe(EGP_ZIP);
   });
 });

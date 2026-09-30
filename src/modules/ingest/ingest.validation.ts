@@ -30,7 +30,6 @@ export type TorQuery = {
   q?: string;
   minBudget?: number;
   category?: string;
-  isSoftware?: boolean;
 };
 
 export function parseTorQuery(query: Record<string, unknown>): TorQuery {
@@ -44,11 +43,6 @@ export function parseTorQuery(query: Record<string, unknown>): TorQuery {
     throw new HttpError(400, "minBudget must be a number");
   }
 
-  // Absent means "don't filter"; only an explicit true/false narrows it.
-  let isSoftware: boolean | undefined;
-  if (query.isSoftware === "true" || query.isSoftware === true) isSoftware = true;
-  else if (query.isSoftware === "false" || query.isSoftware === false) isSoftware = false;
-
   return {
     page,
     limit,
@@ -57,7 +51,6 @@ export function parseTorQuery(query: Record<string, unknown>): TorQuery {
     q: typeof query.q === "string" && query.q ? query.q : undefined,
     minBudget,
     category: typeof query.category === "string" && query.category ? query.category : undefined,
-    isSoftware,
   };
 }
 

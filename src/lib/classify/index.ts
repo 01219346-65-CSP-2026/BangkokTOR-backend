@@ -1,4 +1,5 @@
 import { classifySoftware, type SoftwareSignal } from "./software.ts";
+import { classifyWorkTypes, type WorkTypeId, type WorkTypeSignal } from "./workType.ts";
 import {
   toCategoryId,
   toContractId,
@@ -12,7 +13,8 @@ import {
 
 // Bumped whenever the rules change, so a backfill knows which TORs were
 // classified by which version and what still needs redoing.
-export const CLASSIFIER_VERSION = 1;
+// v2 (2026-09-30): adds workTypes.
+export const CLASSIFIER_VERSION = 2;
 
 export type ClassifyInput = {
   projectName: string;
@@ -32,6 +34,9 @@ export type Classification = {
   softwareScore: number;
   softwareConfidence: number;
   softwareSignals: SoftwareSignal[];
+
+  workTypes: WorkTypeId[];
+  workTypeSignals: WorkTypeSignal[];
 
   classifiedAt: Date;
   classifierVersion: number;
@@ -60,11 +65,14 @@ export function classifyTor(input: ClassifyInput): Classification {
     softwareConfidence: verdict.confidence,
     softwareSignals: verdict.signals,
 
+    ...classifyWorkTypes({ title: input.projectName ?? "", goodsCategory: input.goodsCategory }),
+
     classifiedAt: new Date(),
     classifierVersion: CLASSIFIER_VERSION,
   };
 }
 
 export { SOFTWARE_THRESHOLD, classifySoftware } from "./software.ts";
+export { WORK_TYPES, classifyWorkTypes, type WorkTypeId, type WorkTypeSignal } from "./workType.ts";
 export * from "./vocabulary.ts";
 export type { SoftwareSignal, SoftwareVerdict } from "./software.ts";

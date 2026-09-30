@@ -15,7 +15,7 @@ export type TorContractId = "purchase" | "hire" | "construction" | "lease";
 export type TorMethodId = "eBidding" | "specific" | "competitive";
 
 export type TorStatusId =
-  | "inProgress" | "contracted" | "deliveredOnTime" | "deliveredComplete";
+  | "inProgress" | "contracted" | "deliveredOnTime" | "deliveredComplete" | "contractEnded";
 
 export const CATEGORY_BY_GOODS: Record<string, TorCategoryId> = {
   "วัสดุครุภัณฑ์คอมพิวเตอร์": "it",
@@ -85,6 +85,9 @@ const STATUS_CONTAINS: Array<[string, TorStatusId]> = [
   ["ส่งงานตามกำหนด", "deliveredOnTime"],
   ["ส่งงานตรงตามกำหนด", "deliveredOnTime"],
   ["ส่งงานครบถ้วน", "deliveredComplete"],
+  // The finished state, and it contains "สัญญา" — so it has to come before the
+  // catch-all below, or a completed contract reads as "contract issued".
+  ["สิ้นสุดสัญญา", "contractEnded"],
   ["สัญญา", "contracted"],
 ];
 
