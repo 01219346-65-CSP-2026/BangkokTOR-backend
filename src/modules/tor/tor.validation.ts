@@ -1,5 +1,6 @@
+import { SKILL_VOCABULARY } from "../techstack/techstack.vocabulary.ts";
 import { TOR_CATEGORIES, TOR_METHODS, TOR_SORTS } from "./tor.model.ts";
-import type { ListInput } from "./tor.service.ts";
+import { FIT_BANDS, type FitBand, type ListInput } from "./tor.service.ts";
 
 type TorCategory = (typeof TOR_CATEGORIES)[number];
 type TorMethod = (typeof TOR_METHODS)[number];
@@ -37,6 +38,31 @@ function date(value: unknown): Date | undefined {
 
 const MAX_LIMIT = 100;
 
+const SKILL_SLUGS = new Set<string>(SKILL_VOCABULARY.map((s) => s.slug));
+/** More than the whole vocabulary is never legitimate. */
+const MAX_SKILLS = SKILL_VOCABULARY.length;
+
+/** Comma-separated values, deduplicated, keeping only the ones `keep` knows. */
+function csv<T extends string>(value: unknown, keep: (v: string) => v is T, max: number): T[] {
+  if (typeof value !== "string" || !value) return [];
+  return [...new Set(value.split(",").map((v) => v.trim()))].filter(keep).slice(0, max);
+}
+
+const isSkill = (v: string): v is string => SKILL_SLUGS.has(v);
+const isFitBand = (v: string): v is FitBand => (FIT_BANDS as readonly string[]).includes(v);
+
+/** The reader's profile skills, as slugs. Unknown slugs are dropped like an
+ *  unknown category is — a stale client must not turn into a 400. */
+function skills(value: unknown): string[] | undefined {
+  const out = csv(value, isSkill, MAX_SKILLS);
+  return out.length > 0 ? out : undefined;
+}
+
+function fitBands(value: unknown): FitBand[] | undefined {
+  const out = csv(value, isFitBand, FIT_BANDS.length);
+  return out.length > 0 ? out : undefined;
+}
+
 function num(value: unknown): number | undefined {
   const n = Number(value);
   return Number.isFinite(n) ? n : undefined;
@@ -64,6 +90,8 @@ export function parseListQuery(query: Record<string, unknown>): ListInput {
     publishedFrom: date(query.publishedFrom),
     publishedTo: date(query.publishedTo),
     sort: sort(query.sort),
+    skills: skills(query.skills),
+    fit: fitBands(query.fit),
     page,
     limit,
   };

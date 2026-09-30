@@ -30,17 +30,35 @@ export type ListInput = {
   publishedFrom?: Date;
   publishedTo?: Date;
   sort?: (typeof TOR_SORTS)[number];
+  /** The reader's profile skill slugs. Present → every row is scored. */
+  skills?: string[];
+  /** Fit bands to keep. Needs `skills`; ignored without them. */
+  fit?: FitBand[];
   page: number;
   limit: number;
 };
 
+/** Mirrors the frontend's fitBand() in src/lib/torFit.ts — keep in step. */
+export const FIT_BANDS = ["strong", "moderate", "weak"] as const;
+export type FitBand = (typeof FIT_BANDS)[number];
+const FIT_RANGES: Record<FitBand, { $gte: number; $lt?: number }> = {
+  strong: { $gte: 70 },
+  moderate: { $gte: 40, $lt: 70 },
+  weak: { $gte: 0, $lt: 40 },
+};
+
 /** `newest` is the historical default (announcedAt desc) — every existing
- *  caller that omits `sort` must keep seeing that order. */
+ *  caller that omits `sort` must keep seeing that order.
+ *
+ *  `bestMatch` only means something on the scored path (listScored); a caller
+ *  that asks for it without skills gets `newest`. Rows with no tagged skills
+ *  have a null fitScore, which sorts below every number, so they come last. */
 const SORTS: Record<(typeof TOR_SORTS)[number], Record<string, 1 | -1>> = {
   newest: { announcedAt: -1 },
   oldest: { announcedAt: 1 },
   budgetHigh: { budget: -1 },
   budgetLow: { budget: 1 },
+  bestMatch: { fitScore: -1, matchedSkillCount: -1, announcedAt: -1, _id: -1 },
 };
 
 /** The statuses the public list shows — see the note in listTors. Agency
@@ -91,8 +109,10 @@ export async function listTors(input: ListInput) {
     filter.projectName = { $regex: safe, $options: "i" };
   }
 
+  if (input.skills?.length) return listScored(filter, input, input.skills);
+
   const skip = (input.page - 1) * input.limit;
-  const sort = SORTS[input.sort ?? "newest"];
+  const sort = SORTS[input.sort === "bestMatch" || !input.sort ? "newest" : input.sort];
 
   const [rows, total] = await Promise.all([
     TorModel.find(filter).sort(sort).skip(skip).limit(input.limit).lean(),
@@ -101,6 +121,76 @@ export async function listTors(input: ListInput) {
 
   return {
     items: rows.map((r) => serialize(r as TorLean)),
+    page: input.page,
+    limit: input.limit,
+    total,
+    pages: Math.ceil(total / input.limit),
+  };
+}
+
+type ScoredRow = TorLean & { fitScore: number | null; matchedSkillCount: number };
+
+/**
+ * The list, scored against the reader's skills.
+ *
+ * Scoring, band filtering and sorting all happen here, BEFORE skip/limit. The
+ * frontend used to score each page after fetching it, which sorted every page
+ * on its own: page 1 could end on a 20 and page 2 open on an 84.
+ *
+ * fitScore = share of the TOR's required skills the reader has, 0–100. A TOR
+ * with no tagged skills scores null — "we can't tell", not "no fit".
+ */
+async function listScored(filter: QueryFilter<Tor>, input: ListInput, skills: string[]) {
+  const skip = (input.page - 1) * input.limit;
+
+  const slugs = { $ifNull: ["$requiredSkills.slug", []] };
+  const bands = input.fit?.length
+    ? [{ $match: { $or: input.fit.map((band) => ({ fitScore: FIT_RANGES[band] })) } }]
+    : [];
+
+  const [result] = await TorModel.aggregate<{ items: ScoredRow[]; total: { n: number }[] }>([
+    { $match: filter },
+    {
+      $addFields: {
+        matchedSkillCount: { $size: { $setIntersection: [slugs, skills] } },
+        requiredSkillCount: { $size: slugs },
+      },
+    },
+    {
+      $addFields: {
+        fitScore: {
+          $cond: [
+            { $gt: ["$requiredSkillCount", 0] },
+            // Half-up, like the frontend's Math.round in src/lib/torFit.ts —
+            // $round is half-to-even, and the detail dial must match the card.
+            {
+              $floor: {
+                $add: [{ $multiply: [{ $divide: ["$matchedSkillCount", "$requiredSkillCount"] }, 100] }, 0.5],
+              },
+            },
+            null,
+          ],
+        },
+      },
+    },
+    { $unset: "requiredSkillCount" },
+    ...bands,
+    {
+      $facet: {
+        items: [{ $sort: SORTS[input.sort ?? "newest"] }, { $skip: skip }, { $limit: input.limit }],
+        total: [{ $count: "n" }],
+      },
+    },
+  ]).allowDiskUse(true);
+
+  const total = result?.total[0]?.n ?? 0;
+
+  return {
+    items: (result?.items ?? []).map((r) => ({
+      ...serialize(r),
+      fitScore: r.fitScore,
+      matchedSkillCount: r.matchedSkillCount,
+    })),
     page: input.page,
     limit: input.limit,
     total,

@@ -10,6 +10,7 @@ import { SOURCE_ID } from "../../lib/sources/ckan/index.ts";
 import { DocumentModel } from "../ingest/document.model.ts";
 import { recordError } from "../ingest/ingest.service.ts";
 import { TorModel } from "../tor/tor.model.ts";
+import { tagTorSkills } from "../tor/tor.skills.ts";
 import { ChunkModel } from "./chunk.model.ts";
 import { ExtractionQueueModel } from "./extraction.model.ts";
 
@@ -188,6 +189,9 @@ export async function processBundle(
     { _id: row.torId },
     { $set: { status: "extraction_pending", statusReason: null } },
   );
+
+  // Fresh chunks are the best text the skill tags will ever see.
+  await tagTorSkills(row.torId);
 
   // The loader JSON is an intermediate. The expanded PDFs are not: each has an
   // `extractedPdf` row and is served to readers from GET /api/tors/:id/documents/:documentId/file.
