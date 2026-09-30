@@ -10,6 +10,7 @@ import { SOURCE_ID } from "../../lib/sources/ckan/index.ts";
 import { DocumentModel } from "../ingest/document.model.ts";
 import { recordError } from "../ingest/ingest.service.ts";
 import { TorModel } from "../tor/tor.model.ts";
+import { tagTorSkills } from "../tor/tor.skills.ts";
 import { ChunkModel } from "./chunk.model.ts";
 import { ExtractionQueueModel } from "./extraction.model.ts";
 
@@ -71,8 +72,13 @@ type ExtractRow = {
  * attempt budget on a certainty.
  */
 export async function processBundle(
-  row: ExtractRow,
+  queued: ExtractRow,
 ): Promise<{ ok: true; note?: string } | { ok: false; reason: string }> {
+  // A queue row's torId goes stale when its TOR is re-created; the bundle
+  // document is kept in step, so the id is read from there.
+  const bundle = await DocumentModel.findById(queued.documentId, { torId: 1 }).lean();
+  const row = { ...queued, torId: bundle?.torId ?? queued.torId };
+
   const dir = join(env.extractDir, row.projectId);
   const jsonDir = join(dir, "_json");
 
@@ -110,6 +116,13 @@ export async function processBundle(
   }
 
   const triaged = triageBundle(loaded.pdfs);
+
+  // Every member is kept and listed — scans included. A reader can open a
+  // scanned PDF even though the grader cannot read it.
+  await recordExtractedPdfs(
+    row,
+    triaged.all.map((pdf) => ({ ...pdf, textLayer: pdf.triage.textLayer })),
+  );
 
   // The bundle is one `documents` row, so its textLayer is the bundle-level
   // verdict: readable if ANY member is. The per-member split is kept on the
@@ -177,12 +190,70 @@ export async function processBundle(
     { $set: { status: "extraction_pending", statusReason: null } },
   );
 
-  // The expanded PDFs and the loader JSON are intermediates; the chunks in
-  // Mongo are the product. Keeping them would cost gigabytes per thousand
-  // bundles for nothing.
-  await rm(dir, { recursive: true, force: true });
+  // Fresh chunks are the best text the skill tags will ever see.
+  await tagTorSkills(row.torId);
+
+  // The loader JSON is an intermediate. The expanded PDFs are not: each has an
+  // `extractedPdf` row and is served to readers from GET /api/tors/:id/documents/:documentId/file.
+  await rm(jsonDir, { recursive: true, force: true });
 
   return { ok: true };
+}
+
+export type ExtractedPdfInput = {
+  name: string;
+  path: string;
+  bytes: number;
+  /** Null when the PDF was expanded but never read (the backfill). */
+  pages?: number | null;
+  textLayer?: "digital" | "scanned" | "unreadable" | null;
+};
+
+/**
+ * One `documents` row per expanded PDF. Keyed on the bundle id plus the entry
+ * name, so a retry updates the same rows instead of adding more.
+ */
+export async function recordExtractedPdfs(
+  row: Pick<ExtractRow, "projectId" | "documentId">,
+  pdfs: ExtractedPdfInput[],
+) {
+  // torId comes from the bundle, not the caller: queue rows can carry a stale one.
+  const bundle = await DocumentModel.findById(row.documentId, { url: 1, torId: 1 }).lean();
+  if (!bundle) return;
+
+  for (const pdf of pdfs) {
+    const externalId = `${String(row.documentId)}#${pdf.name}`;
+    await DocumentModel.updateOne(
+      { sourceId: SOURCE_ID, projectId: row.projectId, externalId },
+      {
+        $set: {
+          localPath: pdf.path,
+          bytes: pdf.bytes,
+          pages: pdf.pages ?? null,
+          textLayer: pdf.textLayer ?? null,
+          fetchedAt: new Date(),
+          torId: bundle.torId,
+        },
+        $setOnInsert: {
+          kind: "extractedPdf",
+          // The portal has no per-PDF link; the bundle it came out of is the
+          // closest source fact.
+          url: bundle.url,
+          filename: pdf.name,
+          parentDocumentId: row.documentId,
+        },
+      },
+      { upsert: true },
+    );
+  }
+
+  // A re-extraction that yields fewer members must not leave rows pointing at
+  // files that no longer exist.
+  await DocumentModel.deleteMany({
+    kind: "extractedPdf",
+    parentDocumentId: row.documentId,
+    filename: { $nin: pdfs.map((pdf) => pdf.name) },
+  });
 }
 
 function bundleTextLayer(t: ReturnType<typeof triageBundle>) {

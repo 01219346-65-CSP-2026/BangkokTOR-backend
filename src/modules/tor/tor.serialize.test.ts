@@ -207,3 +207,20 @@ describe("serializeGrade — the internal shape", () => {
     expect(out.findings.find((f) => f.code === "IDMISMATCH")?.evidence).toBe("กรมอื่น");
   });
 });
+
+describe("serialize — required skills", () => {
+  test("emits slug and quote, not the tagger's bookkeeping", () => {
+    const out = serialize(
+      tor({
+        requiredSkills: [{ slug: "react", source: "keyword", evidence: "ใช้ React", chunkIndex: 2 }],
+        skillTaggerVersion: 1,
+      }),
+    ) as Record<string, unknown>;
+    expect(out.requiredSkills).toEqual([{ slug: "react", evidence: "ใช้ React" }]);
+    expect(out.skillTaggerVersion).toBeUndefined();
+  });
+
+  test("an untagged TOR has an empty list, not a missing field", () => {
+    expect(serialize(tor()).requiredSkills).toEqual([]);
+  });
+});

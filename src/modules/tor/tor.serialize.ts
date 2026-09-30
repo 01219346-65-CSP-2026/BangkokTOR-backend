@@ -60,22 +60,32 @@ function toSignal(code: string): PublicSignal | null {
   };
 }
 
+/** A skill the TOR asks for, with the quote it was found in. */
+export type PublicRequiredSkill = { slug: string; evidence: string };
+
 export type PublicTor = Omit<
   TorLean,
-  (typeof PRIVATE_GRADE_FIELDS)[number] | "_id" | "__v"
+  (typeof PRIVATE_GRADE_FIELDS)[number] | "_id" | "__v" | "requiredSkills" | "skillTaggerVersion"
 > & {
   id: string;
   signalCount: number;
   signals: PublicSignal[];
+  requiredSkills: PublicRequiredSkill[];
+  /** Only on a list request that sent the reader's skills — see listScored. */
+  fitScore?: number | null;
+  matchedSkillCount?: number;
 };
 
 export type PublicTorDocument = {
   id: string;
-  kind: "announcement" | "tor" | "bundle";
+  kind: "announcement" | "tor" | "bundle" | "extractedPdf";
   filename: string | null;
+  /** The source portal's link, except for `extractedPdf`, which is served by
+   *  this API at GET /api/tors/:id/documents/:documentId/file. */
   url: string;
   textLayer: "digital" | "scanned" | "unreadable" | "missing";
   pages: number;
+  bytes: number | null;
   fetchedAt: string | null;
 };
 
@@ -118,14 +128,17 @@ export function serialize(tor: TorLean): PublicTor {
     summarizedAt: _summarizedAt,
     summaryVersion: _sv,
     summaryModel: _sm,
+    requiredSkills,
+    skillTaggerVersion: _stv,
     ...rest
   } = tor as TorLean & Record<string, unknown>;
 
   const fired = (ruleFindings ?? []).filter((f) => f.fired);
 
   return {
-    ...(rest as Omit<TorLean, (typeof PRIVATE_GRADE_FIELDS)[number] | "_id">),
+    ...(rest as Omit<PublicTor, "id" | "signalCount" | "signals" | "requiredSkills">),
     id: String(_id),
+    requiredSkills: (requiredSkills ?? []).map((s) => ({ slug: s.slug, evidence: s.evidence ?? "" })),
     signalCount: fired.length,
     signals: fired
       .map((f) => toSignal(f.code ?? ""))
@@ -159,9 +172,13 @@ export function serializeDetail(
       id: String(document._id),
       kind: document.kind,
       filename: document.filename ?? null,
-      url: document.url,
+      url:
+        document.kind === "extractedPdf"
+          ? `/api/tors/${String(tor._id)}/documents/${String(document._id)}/file`
+          : document.url,
       textLayer: document.textLayer ?? "missing",
-      pages: pagesByDocument.get(String(document._id)) ?? 0,
+      pages: document.pages ?? pagesByDocument.get(String(document._id)) ?? 0,
+      bytes: document.bytes ?? null,
       fetchedAt: document.fetchedAt?.toISOString() ?? null,
     })),
     // sanitizeBullets again here, at the last boundary before a reader.

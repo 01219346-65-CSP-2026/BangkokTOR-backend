@@ -10,7 +10,9 @@
     "typecheck": "tsc --noEmit",
     "test": "bun test",
     "extract-worker": "bun run src/extract-worker.ts",
-    "grade-worker": "bun run src/grade-worker.ts"
+    "grade-worker": "bun run src/grade-worker.ts",
+    "backfill-pdfs": "bun run src/backfill-pdfs.ts",
+    "backfill-skills": "bun run src/backfill-skills.ts"
   },
   "devDependencies": {
     "@types/bun": "latest",

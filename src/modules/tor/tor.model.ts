@@ -12,6 +12,10 @@ export const TOR_CATEGORIES = [
 ] as const;
 export const TOR_CONTRACTS = ["purchase", "hire", "construction", "lease"] as const;
 export const TOR_METHODS = ["eBidding", "specific", "competitive"] as const;
+// `bestMatch` needs the caller's skills (ListInput.skills); without them it
+// falls back to `newest` — see tor.service.ts listTors.
+export const TOR_SORTS = ["newest", "oldest", "budgetHigh", "budgetLow", "bestMatch"] as const;
+export const SKILL_TAG_SOURCES = ["keyword", "llm"] as const;
 export const TOR_STATUS_IDS = [
   "inProgress", "contracted", "deliveredOnTime", "deliveredComplete",
 ] as const;
@@ -152,6 +156,27 @@ const torSchema = new Schema(
     summaryVersion: { type: Number, default: null },
     summaryModel: { type: String, default: null },
 
+    // ── Required skills, in the profile vocabulary's slugs (techstack.vocabulary.ts).
+    // What best-match sorting scores a reader's profile against. Written by
+    // lib/skills/tagSkills.ts (`keyword`); an LLM pass may add `llm` entries
+    // later, and each writer only ever replaces its own source's entries.
+    // Public: a skill requirement says nothing about the agency (FR-19).
+    requiredSkills: {
+      type: [
+        {
+          _id: false,
+          slug: { type: String, required: true },
+          source: { type: String, enum: SKILL_TAG_SOURCES, required: true },
+          // Verbatim window around the hit, so a tag can be checked, not trusted.
+          evidence: { type: String, default: "" },
+          chunkIndex: { type: Number, default: null },
+        },
+      ],
+      default: [],
+    },
+    skillsTaggedAt: { type: Date, default: null },
+    skillTaggerVersion: { type: Number, default: null },
+
     status: { type: String, enum: TOR_STATUSES, default: "discovered", required: true },
     statusReason: { type: String, default: null },
 
@@ -178,6 +203,9 @@ torSchema.index({ status: 1, graderVersion: 1 });
 // limit as the corpus grows. This compound serves filter, sort and pagination
 // as one index range scan.
 torSchema.index({ status: 1, announcedAt: -1 });
+// Best-match scoring reads requiredSkills.slug; the backfill finds stale tags.
+torSchema.index({ "requiredSkills.slug": 1 });
+torSchema.index({ skillTaggerVersion: 1 });
 
 export type Tor = InferSchemaType<typeof torSchema>;
 export type TorDoc = HydratedDocument<Tor>;
