@@ -7,6 +7,7 @@ import { type PageResult } from "../../shared/utils/PageResult.ts";
 import type {
   CreateUserBody,
   ListUsersQuery,
+  SyncUserBody,
   UpdateUserBody,
 } from "./user.validation.ts";
 
@@ -66,6 +67,44 @@ export async function createUser(input: CreateUserBody): Promise<UserJSON> {
       throw new HttpError(409, `That email or Google account is already registered`);
     }
     throw err;
+  }
+}
+
+/**
+ * Upsert on Google sign-in. Login and signup are the same OAuth flow, so the
+ * caller cannot know which one this is — the return value tells it.
+ *
+ * Matched by `google_id` first, then by `email`, so a row an admin created
+ * before the person ever signed in gets linked instead of duplicated.
+ */
+export async function syncUser(
+  input: SyncUserBody,
+): Promise<{ user: UserJSON; created: boolean }> {
+  const fields = { ...input, last_login_at: new Date() };
+
+  const updateWhere = (filter: QueryFilter<User>) =>
+    UserModel.findOneAndUpdate(filter, { $set: fields }, { new: true, runValidators: true })
+      .lean<UserLean>()
+      .exec();
+
+  // Two lookups, not one $or: if both rows exist, the google_id match must win.
+  const linkExisting = async () =>
+    (await updateWhere({ google_id: input.google_id })) ??
+    (await updateWhere({ email: input.email }));
+
+  const existing = await linkExisting();
+  if (existing) return { user: serialize(existing), created: false };
+
+  try {
+    const doc = await UserModel.create(fields);
+    return { user: serialize(doc.toObject<UserLean>()), created: true };
+  } catch (err) {
+    // Two first sign-ins racing: the other request inserted between our
+    // lookup and create. Its row is the one to update.
+    if (!isDuplicateKey(err)) throw err;
+    const raced = await linkExisting();
+    if (!raced) throw err;
+    return { user: serialize(raced), created: false };
   }
 }
 
