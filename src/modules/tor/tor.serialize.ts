@@ -71,11 +71,14 @@ export type PublicTor = Omit<
 
 export type PublicTorDocument = {
   id: string;
-  kind: "announcement" | "tor" | "bundle";
+  kind: "announcement" | "tor" | "bundle" | "extractedPdf";
   filename: string | null;
+  /** The source portal's link, except for `extractedPdf`, which is served by
+   *  this API at GET /api/tors/:id/documents/:documentId/file. */
   url: string;
   textLayer: "digital" | "scanned" | "unreadable" | "missing";
   pages: number;
+  bytes: number | null;
   fetchedAt: string | null;
 };
 
@@ -159,9 +162,13 @@ export function serializeDetail(
       id: String(document._id),
       kind: document.kind,
       filename: document.filename ?? null,
-      url: document.url,
+      url:
+        document.kind === "extractedPdf"
+          ? `/api/tors/${String(tor._id)}/documents/${String(document._id)}/file`
+          : document.url,
       textLayer: document.textLayer ?? "missing",
-      pages: pagesByDocument.get(String(document._id)) ?? 0,
+      pages: document.pages ?? pagesByDocument.get(String(document._id)) ?? 0,
+      bytes: document.bytes ?? null,
       fetchedAt: document.fetchedAt?.toISOString() ?? null,
     })),
     // sanitizeBullets again here, at the last boundary before a reader.

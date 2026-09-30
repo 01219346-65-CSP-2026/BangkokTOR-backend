@@ -12,6 +12,7 @@ export const TOR_CATEGORIES = [
 ] as const;
 export const TOR_CONTRACTS = ["purchase", "hire", "construction", "lease"] as const;
 export const TOR_METHODS = ["eBidding", "specific", "competitive"] as const;
+export const TOR_SORTS = ["newest", "oldest", "budgetHigh", "budgetLow"] as const;
 export const TOR_STATUS_IDS = [
   "inProgress", "contracted", "deliveredOnTime", "deliveredComplete",
 ] as const;
