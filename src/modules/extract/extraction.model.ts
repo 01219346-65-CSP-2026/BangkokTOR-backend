@@ -19,6 +19,10 @@ const extractionQueueSchema = new Schema(
     claimedBy: { type: String, default: null },
     claimedAt: { type: Date, default: null },
     attempts: { type: Number, default: 0 },
+    // How long the last attempt held the row, written by the runner after
+    // release. release() clears claimedAt, so this is the only timing that
+    // survives a finished row; the dashboard's per-stage latency reads it.
+    heldMs: { type: Number, default: null },
     reason: { type: String, default: null },
 
     // Filled in on success, so the admin panel can see what a bundle yielded

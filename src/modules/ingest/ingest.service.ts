@@ -284,6 +284,12 @@ export async function recordError(input: {
   });
 }
 
+/** `oversize at 200014417 bytes` → 200014417. Null when the message has another shape. */
+export function parseOversizeBytes(message: string | null | undefined): number | null {
+  const match = /oversize at (\d+) bytes/.exec(message ?? "");
+  return match ? Number(match[1]) : null;
+}
+
 export async function getStatus() {
   const [counts, latestRun, watermark, recentErrors, torCount, docCount] = await Promise.all([
     QueueModel.aggregate<{ _id: string; n: number }>([
@@ -291,7 +297,7 @@ export async function getStatus() {
     ]),
     RunModel.findOne({ sourceId: SOURCE_ID }).sort({ startedAt: -1 }).lean(),
     WatermarkModel.findOne({ sourceId: SOURCE_ID }).lean(),
-    ErrorModel.find().sort({ createdAt: -1 }).limit(20).lean(),
+    ErrorModel.find().sort({ createdAt: -1 }).limit(100).lean(),
     TorModel.countDocuments(),
     DocumentModel.countDocuments(),
   ]);
@@ -323,8 +329,14 @@ export async function getStatus() {
     recentErrors: recentErrors.map((e) => ({
       id: String(e._id),
       kind: e.kind,
+      sourceId: e.sourceId,
       projectId: e.projectId,
       message: e.message,
+      // The size only survives inside the message string (logLine in
+      // outcome.ts), so parse it back out for the dashboard to format.
+      bytes: e.kind === "oversize" ? parseOversizeBytes(e.message) : null,
+      status: e.status ?? null,
+      url: e.url ?? null,
       at: e.createdAt,
     })),
   };

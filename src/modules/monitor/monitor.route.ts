@@ -1,5 +1,7 @@
 import { Router } from "express";
-import { queue, runs, status } from "./monitor.controller.ts";
+import { requireAdminToken } from "../../middleware/adminToken.ts";
+import { writeLimit } from "../../middleware/limits.ts";
+import { flushWorkers, queue, retry, runs, status, stopWorkers } from "./monitor.controller.ts";
 
 // Operational views for the admin dashboard (FR-07).
 //
@@ -13,3 +15,11 @@ export const monitorRouter = Router();
 monitorRouter.get("/status", status);
 monitorRouter.get("/queue", queue);
 monitorRouter.get("/runs", runs);
+
+// Controls. Admin-token gated like the /run endpoints, but on the write tier:
+// runLimit (2/hour) is sized for multi-minute runs, not for clicking Retry.
+// They change what the pipeline does, so they must not be reachable by
+// anything that can merely read status.
+monitorRouter.post("/workers/stop", writeLimit, requireAdminToken, stopWorkers);
+monitorRouter.post("/workers/flush", writeLimit, requireAdminToken, flushWorkers);
+monitorRouter.post("/errors/:id/retry", writeLimit, requireAdminToken, retry);
