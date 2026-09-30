@@ -1,3 +1,4 @@
+import { WORK_TYPES, type WorkTypeId } from "../../lib/classify/workType.ts";
 import { SKILL_VOCABULARY } from "../techstack/techstack.vocabulary.ts";
 import { TOR_CATEGORIES, TOR_METHODS, TOR_SORTS } from "./tor.model.ts";
 import { FIT_BANDS, type FitBand, type ListInput } from "./tor.service.ts";
@@ -11,6 +12,13 @@ type TorSort = (typeof TOR_SORTS)[number];
 function category(value: unknown): TorCategory | undefined {
   return typeof value === "string" && (TOR_CATEGORIES as readonly string[]).includes(value)
     ? (value as TorCategory)
+    : undefined;
+}
+
+/** Unknown work types are dropped like unknown categories. */
+function workType(value: unknown): WorkTypeId | undefined {
+  return typeof value === "string" && (WORK_TYPES as readonly string[]).includes(value)
+    ? (value as WorkTypeId)
     : undefined;
 }
 
@@ -37,6 +45,14 @@ function date(value: unknown): Date | undefined {
 }
 
 const MAX_LIMIT = 100;
+
+/** Free text by design — the values are whatever the portal ships — so only
+ *  its shape is checked. Mongo gets it as an exact-match string, never a regex. */
+function projectStatus(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed && trimmed.length <= 100 ? trimmed : undefined;
+}
 
 const SKILL_SLUGS = new Set<string>(SKILL_VOCABULARY.map((s) => s.slug));
 /** More than the whole vocabulary is never legitimate. */
@@ -75,16 +91,14 @@ export function parseListQuery(query: Record<string, unknown>): ListInput {
   const rawLimit = Math.floor(num(query.limit) ?? 20);
   const limit = Math.min(MAX_LIMIT, Math.max(1, rawLimit));
 
-  const isSoftware =
-    query.isSoftware === "true" ? true : query.isSoftware === "false" ? false : undefined;
-
   return {
     q: typeof query.q === "string" && query.q.trim() ? query.q.trim() : undefined,
     agency: typeof query.agency === "string" ? query.agency : undefined,
     category: category(query.category),
     method: method(query.method),
     province: typeof query.province === "string" ? query.province : undefined,
-    isSoftware,
+    projectStatus: projectStatus(query.projectStatus),
+    workType: workType(query.workType),
     minBudget: num(query.minBudget),
     maxBudget: num(query.maxBudget),
     publishedFrom: date(query.publishedFrom),

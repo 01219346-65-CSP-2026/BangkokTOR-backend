@@ -3,6 +3,7 @@ import { ruleByCode } from "../../lib/grade/rules.ts";
 import type { IngestDocumentLean } from "../ingest/document.model.ts";
 import type { TorChunkLean } from "../extract/chunk.model.ts";
 import type { TorLean } from "./tor.model.ts";
+import { egpListingUrl, isLegacyEgpUrl, SOURCE_ID as CKAN_SOURCE_ID } from "../../lib/sources/ckan/normalize.ts";
 
 // THE FR-19 GATE.
 //
@@ -114,6 +115,19 @@ export type PublicTorDetail = PublicTor & {
   summaryPoints: PublicTorSummaryPoint[];
 };
 
+/**
+ * The "open the original" link. e-GP rows ingested before the portal moved
+ * still store the retired process3 URL, so rebuild it from the project number
+ * on read — cheaper and safer than a migration, and it keeps working if the
+ * portal moves again (change egpListingUrl, nothing else).
+ */
+export function publicSourceUrl(tor: Pick<TorLean, "sourceId" | "projectId" | "sourceUrl">): string {
+  if (tor.sourceId === CKAN_SOURCE_ID && tor.projectId && isLegacyEgpUrl(tor.sourceUrl)) {
+    return egpListingUrl(tor.projectId);
+  }
+  return tor.sourceUrl ?? "";
+}
+
 /** Guest/public shape. Strips the grade entirely and emits neutral signals. */
 export function serialize(tor: TorLean): PublicTor {
   const {
@@ -138,6 +152,7 @@ export function serialize(tor: TorLean): PublicTor {
   return {
     ...(rest as Omit<PublicTor, "id" | "signalCount" | "signals" | "requiredSkills">),
     id: String(_id),
+    sourceUrl: publicSourceUrl(tor),
     requiredSkills: (requiredSkills ?? []).map((s) => ({ slug: s.slug, evidence: s.evidence ?? "" })),
     signalCount: fired.length,
     signals: fired
@@ -172,8 +187,11 @@ export function serializeDetail(
       id: String(document._id),
       kind: document.kind,
       filename: document.filename ?? null,
+      // Our own file route only while the PDF is still on disk. Extraction
+      // normally deletes it (extract.service.ts discardFiles), and then the
+      // row's url is the e-GP bundle it came from.
       url:
-        document.kind === "extractedPdf"
+        document.kind === "extractedPdf" && document.localPath
           ? `/api/tors/${String(tor._id)}/documents/${String(document._id)}/file`
           : document.url,
       textLayer: document.textLayer ?? "missing",

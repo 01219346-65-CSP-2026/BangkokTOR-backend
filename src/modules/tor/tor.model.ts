@@ -1,4 +1,5 @@
 import { Schema, model, type HydratedDocument, type InferSchemaType, type Types } from "mongoose";
+import { WORK_TYPES } from "../../lib/classify/workType.ts";
 
 // The canonical TOR document (§4.3). Money is THB integers, dates are CE —
 // both converted at the adapter edge, never here.
@@ -17,7 +18,7 @@ export const TOR_METHODS = ["eBidding", "specific", "competitive"] as const;
 export const TOR_SORTS = ["newest", "oldest", "budgetHigh", "budgetLow", "bestMatch"] as const;
 export const SKILL_TAG_SOURCES = ["keyword", "llm"] as const;
 export const TOR_STATUS_IDS = [
-  "inProgress", "contracted", "deliveredOnTime", "deliveredComplete",
+  "inProgress", "contracted", "deliveredOnTime", "deliveredComplete", "contractEnded",
 ] as const;
 
 export const TOR_GRADES = ["A", "B", "C"] as const;
@@ -88,6 +89,14 @@ const torSchema = new Schema(
     // The rules that fired, kept so a verdict can be audited rather than trusted.
     softwareSignals: {
       type: [{ _id: false, rule: String, weight: Number }],
+      default: [],
+    },
+    // What kind of software work (lib/classify/workType.ts) — the หมวดหมู่
+    // filter. Multi-label; ["other"] when nothing matched, never empty once
+    // classified. The terms that fired are kept for audit, like softwareSignals.
+    workTypes: { type: [{ type: String, enum: WORK_TYPES }], default: [] },
+    workTypeSignals: {
+      type: [{ _id: false, type: { type: String }, term: String }],
       default: [],
     },
     classifiedAt: { type: Date, default: null },
@@ -203,6 +212,11 @@ torSchema.index({ status: 1, graderVersion: 1 });
 // limit as the corpus grows. This compound serves filter, sort and pagination
 // as one index range scan.
 torSchema.index({ status: 1, announcedAt: -1 });
+// The public scope (tor.service.ts publicScope) puts software + fiscal year in
+// front of every listing, so the listing index has to start with them.
+torSchema.index({ isSoftware: 1, fiscalYear: 1, status: 1, announcedAt: -1 });
+torSchema.index({ projectStatus: 1 });
+torSchema.index({ workTypes: 1 });
 // Best-match scoring reads requiredSkills.slug; the backfill finds stale tags.
 torSchema.index({ "requiredSkills.slug": 1 });
 torSchema.index({ skillTaggerVersion: 1 });

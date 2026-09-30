@@ -17,6 +17,10 @@ const runSchema = new Schema(
       scanned: { type: Number, default: 0 },
       enqueued: { type: Number, default: 0 },
       skipped: { type: Number, default: 0 },
+      // Scanned rows dropped at discovery because they are not software work.
+      notSoftware: { type: Number, default: 0 },
+      // In-scope rows for projects already held, whose portal fields were rewritten.
+      refreshed: { type: Number, default: 0 },
       failed: { type: Number, default: 0 },
     },
 

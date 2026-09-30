@@ -8,6 +8,11 @@ import type { FetchOutcome } from "./outcome.ts";
 // supports incremental queries, so "what's new" is our state, not theirs.
 export type Cursor = {
   lastSeenProjectId?: string;
+  // A source split across several resources resumes inside one of them;
+  // lastOffset is then an offset within resourceId.
+  resourceId?: string;
+  // The year the cursor was written for. A cursor for another year is stale.
+  fiscalYear?: number;
   lastOffset?: number;
   lastFullScanAt?: Date;
 };

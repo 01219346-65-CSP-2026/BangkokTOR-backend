@@ -41,4 +41,14 @@ export const PHANTOM_COLUMNS = [
   "แขวง/ตำบล(Eng)",
 ] as const;
 
+// Resource 10 of the FY2568 package declares the same three columns with a
+// space — "จังหวัด (Eng)" — and an exact-string match missed them, so its
+// rows went unrealigned and the project status was filed under a district
+// key. Compare header names with whitespace stripped.
+const PHANTOM_KEYS = new Set<string>(PHANTOM_COLUMNS.map((c) => c.replace(/\s+/g, "")));
+
+export function isPhantomColumn(field: string): boolean {
+  return PHANTOM_KEYS.has(field.replace(/\s+/g, ""));
+}
+
 export const BANGKOK = "กรุงเทพมหานคร";

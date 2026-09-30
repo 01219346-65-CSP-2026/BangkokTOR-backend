@@ -65,15 +65,46 @@ type ExtractRow = {
   localPath: string;
 };
 
+type BundleOutcome = { ok: true; note?: string } | { ok: false; reason: string };
+
 /**
  * Process one claimed bundle. Every failure that will not improve on a retry
  * (a bomb, a corrupt archive, a bundle of pure scans) is recorded on the TOR as
  * `extraction_incomplete` and returned as ok — retrying it would burn the
  * attempt budget on a certainty.
+ *
+ * Once the outcome is final, the zip and the PDFs expanded from it are deleted
+ * (see discardFiles). A retryable failure keeps them: the next attempt needs
+ * the zip, and re-downloading it would cost more than the disk.
  */
-export async function processBundle(
-  queued: ExtractRow,
-): Promise<{ ok: true; note?: string } | { ok: false; reason: string }> {
+export async function processBundle(queued: ExtractRow): Promise<BundleOutcome> {
+  const outcome = await extractBundle(queued);
+  if (outcome.ok) await discardFiles(queued);
+  return outcome;
+}
+
+/**
+ * Nothing downstream reads the files once extraction is done: grading, skill
+ * tags and summaries all read tor_chunks. Keeping them cost ~67 MB a project
+ * (59 GB for 887). The documents rows stay — filename, pages, text layer — and
+ * their url is the e-GP bundle link, which the site offers instead.
+ */
+async function discardFiles(row: Pick<ExtractRow, "projectId" | "documentId" | "localPath">) {
+  if (env.keepDocumentFiles) return;
+
+  await rm(row.localPath, { force: true });
+  // A projectId is an e-GP number; anything else must not become a path.
+  if (/^\d+$/.test(row.projectId)) {
+    await rm(join(env.extractDir, row.projectId), { recursive: true, force: true });
+  }
+
+  await DocumentModel.updateMany(
+    { $or: [{ _id: row.documentId }, { parentDocumentId: row.documentId }] },
+    { $set: { localPath: null } },
+  );
+}
+
+async function extractBundle(queued: ExtractRow): Promise<BundleOutcome> {
   // A queue row's torId goes stale when its TOR is re-created; the bundle
   // document is kept in step, so the id is read from there.
   const bundle = await DocumentModel.findById(queued.documentId, { torId: 1 }).lean();
@@ -193,8 +224,9 @@ export async function processBundle(
   // Fresh chunks are the best text the skill tags will ever see.
   await tagTorSkills(row.torId);
 
-  // The loader JSON is an intermediate. The expanded PDFs are not: each has an
-  // `extractedPdf` row and is served to readers from GET /api/tors/:id/documents/:documentId/file.
+  // The loader JSON is an intermediate. The expanded PDFs go too, in
+  // discardFiles, unless KEEP_DOCUMENT_FILES — then each `extractedPdf` row is
+  // served from GET /api/tors/:id/documents/:documentId/file.
   await rm(jsonDir, { recursive: true, force: true });
 
   return { ok: true };
