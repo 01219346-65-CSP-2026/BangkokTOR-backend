@@ -48,6 +48,10 @@ export const env = {
   // read the private grade. Not user auth — see middleware/adminToken.ts.
   // Required in production; optional in dev so a local run needs no setup.
   adminToken: process.env.ADMIN_TOKEN ?? "",
+  // HS256 secret the frontend signs its per-request user token with (see
+  // BangkokTOR-frontend/src/api/client.ts). Must match the frontend's value.
+  // Unset means the /api/me routes answer 401 — they never fall open.
+  internalJwtSecret: process.env.INTERNAL_JWT_SECRET ?? "",
 
   // Per-IP request ceilings. Reads are generous enough that normal browsing
   // never notices; the `/run` endpoints are near-zero because each one costs
@@ -56,6 +60,7 @@ export const env = {
   rateLimitPipelineMax: Number(process.env.RATE_LIMIT_PIPELINE_MAX ?? 60),
   rateLimitWriteMax: Number(process.env.RATE_LIMIT_WRITE_MAX ?? 20),
   rateLimitRunMax: Number(process.env.RATE_LIMIT_RUN_MAX ?? 2),
+  rateLimitProfileMax: Number(process.env.RATE_LIMIT_PROFILE_MAX ?? 60),
 
   // Verified bundles reach 512,452,129 bytes. Anything past this is recorded
   // as oversize rather than filling the disk.
@@ -80,6 +85,11 @@ export function assertServeConfig(): void {
   if (isProduction && !env.adminToken) {
     throw new Error(
       "ADMIN_TOKEN is not set — the /run, write, and grade routes would be unprotected in production. See .env.example.",
+    );
+  }
+  if (isProduction && !env.internalJwtSecret) {
+    throw new Error(
+      "INTERNAL_JWT_SECRET is not set — signed-in users could not reach /api/me. See .env.example.",
     );
   }
 }

@@ -42,3 +42,15 @@ export const runLimit = rateLimit({
   windowMs: HOUR,
   max: env.rateLimitRunMax,
 });
+
+/**
+ * The signed-in user's own profile. Keyed by user, not IP: every call comes
+ * from the frontend's server, so an IP key would make all users share one
+ * bucket. Must be mounted AFTER requireUser, which sets `res.locals.userId`.
+ */
+export const profileLimit = rateLimit({
+  name: "profile",
+  windowMs: MINUTE,
+  max: env.rateLimitProfileMax,
+  key: (_req, res) => String(res.locals.userId ?? "unknown"),
+});
