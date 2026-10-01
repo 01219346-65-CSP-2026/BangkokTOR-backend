@@ -29,4 +29,57 @@ export const SKILL_VOCABULARY = [
   { slug: "thaiD", name: "ThaiD", category: "government" },
   { slug: "egpApi", name: "e-GP API", category: "government" },
   { slug: "pdpa", name: "PDPA", category: "government" },
+
+  // Added 2026-09-30 from what FY2569 software TORs actually ask for
+  // (titles of 2,746 TORs + text of the first extracted ones).
+  // Web & mobile
+  { slug: "android", name: "Android / Kotlin", category: "frontend" },
+  { slug: "ios", name: "iOS / Swift", category: "frontend" },
+  { slug: "php", name: "PHP / Laravel", category: "frontend" },
+  { slug: "uxui", name: "UX/UI design", category: "frontend" },
+  { slug: "wcag", name: "Web accessibility (WCAG)", category: "frontend" },
+  { slug: "cms", name: "CMS / WordPress", category: "frontend" },
+  // Backend & databases
+  { slug: "mysql", name: "MySQL / MariaDB", category: "backend" },
+  { slug: "oracleDb", name: "Oracle Database", category: "backend" },
+  { slug: "sqlServer", name: "SQL Server", category: "backend" },
+  { slug: "microservices", name: "Microservices / API gateway", category: "backend" },
+  { slug: "messageQueue", name: "Kafka / message queue", category: "backend" },
+  { slug: "erp", name: "ERP / SAP", category: "backend" },
+  // AI & data
+  { slug: "aiMl", name: "AI / machine learning", category: "data" },
+  { slug: "llm", name: "LLM / generative AI", category: "data" },
+  { slug: "chatbot", name: "Chatbot", category: "data" },
+  { slug: "computerVision", name: "Computer vision / OCR", category: "data" },
+  { slug: "dataWarehouse", name: "Data warehouse / ETL", category: "data" },
+  { slug: "bigData", name: "Big data", category: "data" },
+  { slug: "dashboardBi", name: "Dashboard / BI", category: "data" },
+  { slug: "remoteSensing", name: "Satellite / remote sensing", category: "data" },
+  // Cloud & infrastructure
+  { slug: "govCloud", name: "GDCC / government cloud", category: "infra" },
+  { slug: "publicCloud", name: "AWS / Azure / GCP", category: "infra" },
+  { slug: "virtualization", name: "VMware / virtualization", category: "infra" },
+  { slug: "linux", name: "Linux server", category: "infra" },
+  { slug: "backupDr", name: "Backup & disaster recovery", category: "infra" },
+  { slug: "network", name: "Network infrastructure", category: "infra" },
+  { slug: "monitoring", name: "Monitoring (Grafana / Zabbix)", category: "infra" },
+  // Security & standards
+  { slug: "iso27001", name: "ISO/IEC 27001", category: "security" },
+  { slug: "sso", name: "SSO / OAuth / MFA", category: "security" },
+  { slug: "ldap", name: "LDAP / Active Directory", category: "security" },
+  { slug: "firewall", name: "Firewall / WAF", category: "security" },
+  { slug: "pentest", name: "Penetration testing / VA", category: "security" },
+  { slug: "soc", name: "SOC / SIEM", category: "security" },
+  { slug: "sslTls", name: "SSL/TLS certificates", category: "security" },
+  // Government integration
+  { slug: "gdx", name: "GDX / data exchange", category: "government" },
+  { slug: "dopa", name: "DOPA / ID-card linkage", category: "government" },
+  { slug: "digitalSignature", name: "Digital signature / PKI", category: "government" },
+  { slug: "lineApi", name: "LINE OA / LINE API", category: "government" },
+  { slug: "ePayment", name: "e-Payment / PromptPay", category: "government" },
+  { slug: "openData", name: "Open data / CKAN", category: "government" },
+  { slug: "his", name: "Hospital IS (HIS / HL7)", category: "government" },
+  { slug: "lms", name: "LMS / e-Learning", category: "government" },
+  { slug: "iot", name: "IoT / MQTT", category: "government" },
+  { slug: "itil", name: "ITIL / service desk", category: "government" },
 ] as const;

@@ -1,3 +1,4 @@
+import { SKILL_VOCABULARY } from "../techstack/techstack.vocabulary.ts";
 import { describe, expect, test } from "bun:test";
 import { HttpError } from "../../middleware/errors.ts";
 import { parseProfilePut } from "./me.validation.ts";
@@ -57,7 +58,7 @@ describe("parseProfilePut", () => {
     expect(parseProfilePut({ ...valid, skills: ["react", "react"] }).skills).toEqual(["react"]);
     expect(status(() => parseProfilePut({ ...valid, skills: "react" }))).toBe(400);
     expect(status(() => parseProfilePut({ ...valid, skills: [{ $ne: null }] }))).toBe(400);
-    expect(status(() => parseProfilePut({ ...valid, skills: Array(51).fill("x").map((x, i) => x + i) }))).toBe(400);
+    expect(status(() => parseProfilePut({ ...valid, skills: Array(SKILL_VOCABULARY.length + 1).fill("x").map((x, i) => x + i) }))).toBe(400);
   });
 
   test("keys it does not name are dropped — role cannot ride along", () => {
