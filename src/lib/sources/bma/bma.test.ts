@@ -164,3 +164,41 @@ describe("stageFromFlowName", () => {
     expect(stageFromFlowName("something new")).toBeUndefined();
   });
 });
+
+describe("discoverBma resilience", () => {
+  const page = (projectNumber: string): BmaPage<BmaListRow> => ({
+    totalCount: 1,
+    hasNextPage: true,
+    data: [{ projectId: `u-${projectNumber}`, projectNumber, projectName: "พัฒนาระบบสารสนเทศ", masterOrgGroupName: null, masterOrgDepartmentName: null, projectBudget: null, masterContractAvailableCode: "S1" }],
+  });
+  const api = (fail: Set<number>) => ({
+    searchPage: async (n: number) => {
+      if (fail.has(n)) throw new Error(`HTTP 500 page ${n}`);
+      return page(`690900000${String(n).padStart(2, "0")}`);
+    },
+    projectDetail: async (uuid: string) => ({ ...DETAIL, projectId: uuid, projectNumber: uuid.slice(2) }),
+    announcements: async () => [],
+  });
+
+  test("a failed list page is skipped, and the scan goes on", async () => {
+    const errors: string[] = [];
+    const out: string[] = [];
+    const options = { lookbackDays: 150, maxPages: 4, now: new Date("2026-10-02"), onError: (id: string) => void errors.push(id) };
+    for await (const raw of discoverBma(options, api(new Set([2])))) out.push(raw.projectId);
+    expect(out).toEqual(["69090000001", "69090000003", "69090000004"]);
+    expect(errors).toEqual(["list page 2"]);
+  });
+
+  test("three failed pages in a row end the scan", async () => {
+    const run = async () => {
+      for await (const _ of discoverBma({ lookbackDays: 150, maxPages: 9, now: new Date("2026-10-02") }, api(new Set([2, 3, 4])))) void _;
+    };
+    await expect(run()).rejects.toThrow("page 4");
+  });
+
+  test("startPage resumes mid-scan", async () => {
+    const out: string[] = [];
+    for await (const raw of discoverBma({ lookbackDays: 150, maxPages: 3, startPage: 3, now: new Date("2026-10-02") }, api(new Set()))) out.push(raw.projectId);
+    expect(out).toEqual(["69090000003"]);
+  });
+});

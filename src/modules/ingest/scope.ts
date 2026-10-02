@@ -73,11 +73,3 @@ export function scopeOf(c: Classified, fiscalYear?: number): ScopeVerdict {
   return c.classification.isSoftware ? "in-scope" : "not-software";
 }
 
-/**
- * Can an outside team bid on it? A direct award (เฉพาะเจาะจง) never publishes
- * a ประกาศเชิญชวน, so it has no deadline and no open round. Applied by the
- * BMA feed only: the national feeds hold awarded history, kept for reference.
- */
-export function isBiddable(c: Classified): boolean {
-  return c.classification.methodId !== "specific";
-}

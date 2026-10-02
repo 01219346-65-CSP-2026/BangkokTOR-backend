@@ -60,9 +60,14 @@ does.** Don't put the whole API behind a session guard.
 
 ### Explicitly out of scope for this phase
 
-Bid submission, non-software procurement, anything outside Bangkok, monetization/billing,
-mobile, and taking legal action on a user's behalf. If a task seems to need one of these,
-stop and ask — it's more likely a misread than a scope change.
+Bid submission, non-software procurement, monetization/billing, mobile, and taking legal
+action on a user's behalf. If a task seems to need one of these, stop and ask — it's more
+likely a misread than a scope change.
+
+**Scope change (2026-10-02, Kelvin): location is no longer Bangkok-only.** Every province
+is in scope; the site lists all of Thailand by default with a จังหวัด filter, and Bangkok
+is highlighted on cards. Reason: more tenders matter more than the boundary. The SRS still
+says Bangkok — this decision supersedes it for this repo.
 
 ---
 
@@ -120,11 +125,17 @@ be copied in wholesale.
 and CKAN both export projects that already have a contract, so every TOR they produce
 has a winner. Measured: all 4,482 stored TORs had `winnerName` and `contractSignedAt`.
 A site meant to show what can still be bid on needs a source that lists a project while it
-is open. **That source is the BMA portal (Source A)**, now the default feed
-(`EGP_FEED=bma`, `lib/sources/bma/`). It lists projects the day they are announced, needs
-no key, and is not Turnstile-gated. Its `projectNumber` **is** the e-GP projectId. It only
-covers BMA agencies, which is the product's Bangkok scope. National agencies based in
-Bangkok are reachable only through process5's gated search, which is not used.
+is open. **That source is the BMA portal (Source A)** (`lib/sources/bma/`). It lists
+projects the day they are announced, needs no key, and is not Turnstile-gated. Its
+`projectNumber` **is** the e-GP projectId. It only covers BMA agencies; open tenders from
+other agencies are reachable only through process5's gated search, which is not used.
+
+**The default feed is `EGP_FEED=all`**: one run reads govspending (all of Thailand, fast,
+awarded history; skipped when the published file is unchanged) and then BMA (open
+tenders, slow: ~2,200 projects a month, ~140 list pages for a fiscal year at ~16 s each).
+A transient BMA 500 skips that page; three in a row end the run. `discover --page N`
+resumes a BMA scan. `bun run restore-from-backup [--from D_M_YYYY]` puts backed-up TORs
+back into live (used 2026-10-02 to restore the 4,475 national TORs).
 
 - Discovery reads newest-first back `BMA_LOOKBACK_DAYS` (90). It sends a detail request
   only for title candidates not already held (~4 s each, so this matters). It drops direct

@@ -25,17 +25,30 @@ export const env = {
   // whether or not ingestion can run.
   datagothKey: process.env.DATAGOTH_KEY ?? "",
   // Where discovery reads e-GP projects from (AGENTS.md §3):
-  //   "bma" (default)  — the BMA portal. Lists projects the day they are
+  //   "all" (default)  — govspending, then bma, in one run: national volume
+  //                      and history, plus open tenders with deadlines.
+  //   "bma"            — the BMA portal. Lists projects the day they are
   //                      announced, so it is the only feed with OPEN tenders.
-  //   "govspending"    — DGA's bulk export. Contracted projects only.
+  //   "govspending"    — DGA's bulk export. Contracted projects only, all of
+  //                      Thailand, fast (one file).
   //   "ckan"           — data.go.th's datastore. Contracted, and a year behind.
-  egpFeed: (["ckan", "govspending"].includes(process.env.EGP_FEED ?? "")
+  egpFeed: (["ckan", "govspending", "bma"].includes(process.env.EGP_FEED ?? "")
     ? process.env.EGP_FEED
-    : "bma") as "ckan" | "govspending" | "bma",
-  // BMA discovery reads newest-first back this far. Bidding windows are weeks
-  // long; 90 days also catches projects still between TOR and invitation.
-  bmaLookbackDays: Number(process.env.BMA_LOOKBACK_DAYS ?? 90),
-  bmaMaxPages: Number(process.env.BMA_MAX_PAGES ?? 40),
+    : "all") as "ckan" | "govspending" | "bma" | "all",
+  // BMA discovery reads newest-first back this many days. Unset = from the
+  // start of the previous Thai fiscal year, the window the site shows
+  // (ingest.service.ts daysSincePreviousFiscalYear).
+  bmaLookbackDays: process.env.BMA_LOOKBACK_DAYS ? Number(process.env.BMA_LOOKBACK_DAYS) : undefined,
+  // ~17k BMA projects a year at 200 a page; a hard stop well past two years.
+  bmaMaxPages: Number(process.env.BMA_MAX_PAGES ?? 250),
+  // Show every TOR on the public list, whatever its pipeline state — without
+  // waiting for extraction or grading, and including extraction_incomplete
+  // (scans). For checking that discovery works. Defaults ON outside
+  // production, OFF in production, where FR-11 holds incomplete records back.
+  // Set LIST_ALL_TORS=true|false to override either way.
+  listAllTors: process.env.LIST_ALL_TORS
+    ? process.env.LIST_ALL_TORS === "true"
+    : (process.env.NODE_ENV ?? "development") !== "production",
   // Unset = the newest fiscal year the feed has published, resolved per run.
   // Set a Buddhist-era year (e.g. 2569) to pin it. CKAN_FISCAL_YEAR is the old name.
   egpFiscalYear: (() => {
@@ -124,10 +137,10 @@ export function assertServeConfig(): void {
 // Ingestion needs the CKAN key; serving does not. Called at the start of a run
 // so the failure is one clear message, not a 403 sixteen pages in.
 export function assertIngestConfig(): void {
-  // The BMA portal needs no key.
+  // The BMA portal needs no key; every other feed (and "all") does.
   if (env.egpFeed !== "bma" && !env.datagothKey) {
     throw new Error(
-      "DATAGOTH_KEY is not set — CKAN discovery cannot run. Copy it from ~/Code/testTOR/.env",
+      "DATAGOTH_KEY is not set — the national feeds cannot run. Copy it from ~/Code/testTOR/.env, or set EGP_FEED=bma",
     );
   }
 }

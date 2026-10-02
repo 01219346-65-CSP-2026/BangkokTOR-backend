@@ -19,6 +19,7 @@
     "refresh-bidding": "bun run src/refresh-bidding.ts",
     "backup-collections": "bun run src/backup-collections.ts",
     "move-national-out": "bun run src/move-national-out.ts",
+    "restore-from-backup": "bun run src/restore-from-backup.ts",
     "cleanup-document-files": "bun run src/cleanup-document-files.ts"
   },
   "devDependencies": {

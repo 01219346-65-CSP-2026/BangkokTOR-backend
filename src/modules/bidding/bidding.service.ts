@@ -37,6 +37,7 @@ export type BiddingTarget = {
   _id: Types.ObjectId;
   projectId: string;
   bmaProjectId?: string | null;
+  methodId?: string | null;
   bidClosesAt?: Date | null;
   deadlineEvidence?: { documentUrl?: string | null } | null;
 };
@@ -72,7 +73,9 @@ export async function checkBidding(tor: BiddingTarget): Promise<BiddingResult> {
   let closesAt = tor.bidClosesAt ?? null;
   let note: string | undefined;
 
-  if (tor.bmaProjectId && stage && HAS_INVITATION.includes(stage)) {
+  // A direct award (เฉพาะเจาะจง) never publishes an invitation: there is no
+  // deadline to read, and looking would only file a "not found" error per TOR.
+  if (tor.bmaProjectId && tor.methodId !== "specific" && stage && HAS_INVITATION.includes(stage)) {
     const read = await readDeadline(tor);
     note = read.note;
     if (read.set) {
@@ -196,7 +199,7 @@ async function invitationText(projectId: string, url: string): Promise<string | 
 export async function refreshBidding(options: { limit?: number; log?: (line: string) => void } = {}) {
   const rows = await TorModel.find(
     { bmaProjectId: { $ne: null }, biddingStage: { $in: LIVE_STAGES } },
-    { projectId: 1, bmaProjectId: 1, bidClosesAt: 1, deadlineEvidence: 1 },
+    { projectId: 1, bmaProjectId: 1, methodId: 1, bidClosesAt: 1, deadlineEvidence: 1 },
   )
     .limit(options.limit ?? 0)
     .lean();

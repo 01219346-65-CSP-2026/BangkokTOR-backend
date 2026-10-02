@@ -3,7 +3,6 @@ import { isValidObjectId, type PipelineStage, type QueryFilter } from "mongoose"
 import { env } from "../../config/env.ts";
 import { DocumentModel } from "../ingest/document.model.ts";
 import type { WorkTypeId } from "../../lib/classify/workType.ts";
-import { BANGKOK } from "../../lib/sources/ckan/columns.ts";
 import { serialize, serializeDetail, serializeGrade } from "./tor.serialize.ts";
 import { TorTextModel } from "../extract/torText.model.ts";
 import {
@@ -86,13 +85,24 @@ const SORTS: Record<Exclude<TorSort, "closingSoon">, Record<string, 1 | -1>> = {
 
 /** The statuses the public list shows — see the note in listTors. Agency
  *  and category counts use the same set, so a count always matches what
- *  choosing that option returns. */
-const LISTED = { $in: ["graded", "published", "documents_fetched"] as TorStatus[] };
+ *  choosing that option returns.
+ *
+ *  `extraction_pending` is a TOR whose text has been read and is waiting for
+ *  the grader — strictly further along than `documents_fetched`. Leaving it
+ *  out made extraction HIDE a TOR until grading ran (2026-10-02: all 9 BMA
+ *  TORs vanished the moment extract-worker finished them). */
+const LISTED = {
+  $in: ["graded", "published", "documents_fetched", "extraction_pending"] as TorStatus[],
+};
 
 /*
- * What the website is about: software work, in Bangkok, from this fiscal year
- * or last. Every public read — list, facets, stats, a single TOR — goes through
- * this, so a row outside it is unreachable, not merely unlisted.
+ * What the website is about: software work, anywhere in Thailand, from this
+ * fiscal year or last. Every public read — list, facets, stats, a single TOR —
+ * goes through this, so a row outside it is unreachable, not merely unlisted.
+ *
+ * Location used to be Bangkok-only. Widened 2026-10-02 (Kelvin): more tenders
+ * matter more than the boundary, so every province is in scope and the
+ * จังหวัด filter (ListInput.province, getStats().byProvince) narrows it.
  *
  * "This year" is the Thai fiscal year by the calendar (October–September), and
  * the one before it: a tender announced in September of FY2569 is bid on in
@@ -109,9 +119,9 @@ export function thaiFiscalYear(now: Date = new Date()): number {
 function publicScope(now: Date = new Date()): QueryFilter<Tor> {
   const fy = thaiFiscalYear(now);
   return {
-    status: LISTED,
+    // env.listAllTors drops the pipeline-state gate (dev default) — see env.ts.
+    ...(env.listAllTors ? {} : { status: LISTED }),
     isSoftware: true,
-    province: BANGKOK,
     $or: [{ fiscalYear: { $in: [fy, fy - 1] } }, { fiscalYear: null, bmaProjectId: { $ne: null } }],
   };
 }
@@ -353,7 +363,7 @@ export async function getStats() {
     })),
   );
 
-  const [total, byCategory, byWorkType, byMethod, byStage, withSignals, top] = await Promise.all([
+  const [total, byCategory, byWorkType, byMethod, byStage, byProvince, withSignals, top] = await Promise.all([
     TorModel.countDocuments(scope),
     facet("category"),
     // Multi-label, so a TOR counts once under each of its work types — the
@@ -369,6 +379,7 @@ export async function getStats() {
       { $match: scope },
       { $group: { _id: STAGE_EXPRESSION, n: { $sum: 1 } } },
     ]),
+    facet("province"),
     TorModel.countDocuments({ ...scope, signalCount: { $gt: 0 } }),
     TorModel.findOne({ ...scope, budget: { $ne: null } }, { budget: 1 })
       .sort({ budget: -1 })
@@ -397,6 +408,11 @@ export async function getStats() {
       stage,
       count: byStage.find((s) => s._id === stage)?.n ?? 0,
     })).filter((s) => s.count > 0),
+    // จังหวัด, most TORs first — the province filter's options. A row with no
+    // province recorded is left out of the options, not filed as "unknown".
+    byProvince: byProvince
+      .filter((p) => p._id)
+      .map((p) => ({ province: p._id as string, count: p.n })),
     // The budget slider's right edge.
     maxBudget: top?.budget ?? null,
   };

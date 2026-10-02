@@ -14,7 +14,7 @@ import { DocumentModel } from "./document.model.ts";
 import { ErrorModel } from "./error.model.ts";
 import { QueueModel, type QueueDoc } from "./queue.model.ts";
 import { RunModel } from "./run.model.ts";
-import { classifyRaw, isBiddable, isSoftwareCandidate, scopeOf, type Classified } from "./scope.ts";
+import { classifyRaw, isSoftwareCandidate, scopeOf, type Classified } from "./scope.ts";
 import { WatermarkModel } from "./watermark.model.ts";
 
 // Services take plain arguments and return plain data (§6) — that is what lets
@@ -27,6 +27,8 @@ export type DiscoverOptions = {
   full?: boolean;
   /** BMA: override env.bmaLookbackDays for this run. */
   lookbackDays?: number;
+  /** BMA: resume the list scan from this page. */
+  startPage?: number;
   /** Every row dropped by scope, with why — for the miss report (src/discover.ts). */
   onRejected?: (row: RejectedRow) => void;
 };
@@ -34,7 +36,7 @@ export type DiscoverOptions = {
 export type RejectedRow = {
   projectId: string;
   title: string;
-  reason: "not-software" | "not-biddable";
+  reason: "not-software";
   score: number;
   signals: string;
   method: string | null;
@@ -56,10 +58,11 @@ function rejected(c: Classified, reason: RejectedRow["reason"]): RejectedRow {
 // Stage ①: read the newest fiscal year, upsert one queue row per SOFTWARE
 // project. Everything else is counted and dropped here — see scope.ts.
 //
-// Three feeds of e-GP projects (env.egpFeed):
+// Three feeds of e-GP projects (env.egpFeed; the default "all" reads
+// govspending then bma in one run):
 //   bma         — the BMA portal, newest first. The only feed that lists a
 //                 project before it has a contract, i.e. while it can be bid
-//                 on. Default. Bangkok agencies only.
+//                 on. Bangkok agencies only.
 //   govspending — DGA's bulk export. Current fiscal year, contracted projects.
 //   ckan        — data.go.th's datastore. About a year behind; kept for older years.
 // All yield rows keyed by CKAN column names, so everything after this point is
@@ -86,66 +89,41 @@ export async function runDiscovery(options: DiscoverOptions = {}) {
       },
     );
 
+  // "all" reads the national export first — fast, and a no-op when the
+  // published file has not changed — then the slow BMA portal for open tenders.
+  const feedNames: Array<"ckan" | "govspending" | "bma"> =
+    env.egpFeed === "all" ? ["govspending", "bma"] : [env.egpFeed];
+
   try {
-    const watermark = await loadWatermark();
-    const feed =
-      env.egpFeed === "bma"
-        ? await openBmaFeed(String(run._id), options)
-        : env.egpFeed === "ckan"
-          ? await openCkanFeed(watermark, options)
-          : await openBulkFeed(watermark, options);
-
-    if (feed.unchanged) {
-      await saveCounts({ status: "finished", finishedAt: new Date(), error: null });
-      return { runId: String(run._id), ...counts, fiscalYear: feed.fiscalYear, unchanged: true };
-    }
-
     let stoppedEarly = false;
-    for await (const raw of feed.stream) {
-      counts.scanned++;
+    for (const name of feedNames) {
+      if (stoppedEarly) break;
+      const watermark = await loadWatermark();
+      const feed =
+        name === "bma"
+          ? await openBmaFeed(String(run._id), options)
+          : name === "ckan"
+            ? await openCkanFeed(watermark, options)
+            : await openBulkFeed(watermark, options);
 
-      // The cheap check first: it rejects ~99% of rows without normalizing them.
-      // BMA rows are few and already title-filtered: classify them all, so
-      // every rejection reaches the miss report with its score.
-      const classified = feed.biddableOnly || isSoftwareCandidate(raw) ? classifyRaw(raw) : null;
-      if (!classified || scopeOf(classified, feed.fiscalYear) !== "in-scope") {
-        counts.notSoftware++;
-        // Only rows that were classified are worth reporting; the cheap
-        // pre-check rejects millions on the national feeds.
-        if (classified) options.onRejected?.(rejected(classified, "not-software"));
-      } else if (feed.biddableOnly && !isBiddable(classified)) {
-        // A direct award (เฉพาะเจาะจง) has no invitation and no deadline:
-        // nobody outside can bid on it.
-        counts.notBiddable++;
-        options.onRejected?.(rejected(classified, "not-biddable"));
-      } else if (await refresh(raw, classified)) {
-        counts.refreshed++;
-      } else if ((await enqueue(raw, String(run._id))) === "enqueued") {
-        counts.enqueued++;
-      } else {
-        // Already queued — most often a second contract row of the same project.
-        counts.skipped++;
+      if (feed.unchanged) {
+        console.log(`${name}: unchanged since the last full scan — skipped`);
+        continue;
       }
-
-      if (options.limit && counts.enqueued >= options.limit) {
-        stoppedEarly = true;
-        break;
-      }
-      if (counts.scanned % 5_000 === 0) await saveCounts();
+      stoppedEarly = await drain(feed);
+      // A limited run read part of the source; it is not a full scan, and the
+      // resume point must survive for the next run.
+      if (!stoppedEarly) await feed.completed();
     }
 
-    await saveCounts({ status: "finished", finishedAt: new Date() });
-
-    // A limited run read part of the year; it is not a full scan, and the
-    // resume point must survive for the next run.
-    if (!stoppedEarly) await feed.completed();
+    await saveCounts({ status: "finished", finishedAt: new Date(), error: null });
 
     // Stages move and re-announcements change dates, so every TOR still
     // short of an award is re-checked on each run (NFR-02).
-    if (env.egpFeed === "bma") {
+    if (feedNames.includes("bma")) {
       const bidding = await refreshBidding();
       await RunModel.updateOne({ _id: run._id }, { $set: { "counts.biddingChecked": bidding.checked, "counts.open": bidding.open } });
-      return { runId: String(run._id), ...counts, bidding };
+      return { runId: String(run._id), feeds: feedNames, ...counts, bidding };
     }
   } catch (error) {
     await RunModel.updateOne(
@@ -160,7 +138,39 @@ export async function runDiscovery(options: DiscoverOptions = {}) {
     throw error;
   }
 
-  return { runId: String(run._id), ...counts };
+  return { runId: String(run._id), feeds: feedNames, ...counts };
+
+  /** Classify and enqueue one feed's rows. True when `limit` stopped it early. */
+  async function drain(feed: Feed): Promise<boolean> {
+    for await (const raw of feed.stream) {
+      counts.scanned++;
+
+      // The cheap check first: it rejects ~99% of rows without normalizing them.
+      // BMA rows are few and already title-filtered: classify them all, so
+      // every rejection reaches the miss report with its score.
+      const classified = feed.classifyAll || isSoftwareCandidate(raw) ? classifyRaw(raw) : null;
+      if (!classified || scopeOf(classified, feed.fiscalYear) !== "in-scope") {
+        counts.notSoftware++;
+        // Only rows that were classified are worth reporting; the cheap
+        // pre-check rejects millions on the national feeds.
+        if (classified) options.onRejected?.(rejected(classified, "not-software"));
+      } else if (await refresh(raw, classified)) {
+        counts.refreshed++;
+      } else if ((await enqueue(raw, String(run._id))) === "enqueued") {
+        counts.enqueued++;
+      } else {
+        // Already queued — most often a second contract row of the same project.
+        counts.skipped++;
+      }
+
+      if (options.limit && counts.enqueued >= options.limit) return true;
+      // A BMA run yields a few hundred rows over many slow minutes; without
+      // frequent saves its run record reads zero until the very end.
+      if (counts.scanned % (feed.progressEvery ?? 5_000) === 0) await saveCounts();
+    }
+    await saveCounts();
+    return false;
+  }
 }
 
 type WatermarkLean = Awaited<ReturnType<typeof loadWatermark>>;
@@ -169,8 +179,11 @@ const loadWatermark = () => WatermarkModel.findOne({ sourceId: SOURCE_ID }).lean
 type Feed = {
   /** The year the feed was read for. Undefined when rows carry no year (bma). */
   fiscalYear?: number;
-  /** Drop rows with no public invitation (see scope.ts isBiddable). */
-  biddableOnly?: boolean;
+  /** Classify every row, skipping the cheap pre-check: rows are few and
+   *  already title-filtered, so every rejection reaches the miss report. */
+  classifyAll?: boolean;
+  /** Save run counts every N rows. Default 5,000 (the national bulk feeds). */
+  progressEvery?: number;
   stream: AsyncIterable<RawProject>;
   /** Called once the whole year has been read. */
   completed: () => Promise<void>;
@@ -236,10 +249,23 @@ async function openBulkFeed(watermark: WatermarkLean, options: DiscoverOptions):
 }
 
 /**
- * The BMA portal, newest first, back to env.bmaLookbackDays. Every run reads
- * the whole window — list pages are the cheap part — and details only projects
- * not seen before, so there is no resume point to keep.
+ * The BMA portal, newest first. Every run reads the whole window — list pages
+ * are the cheap part — and details only projects not seen before, so there is
+ * no resume point to keep.
+ *
+ * The window is the site's own: from 1 October of the previous Thai fiscal
+ * year (tor.service.ts publicScope shows this FY and last), unless
+ * BMA_LOOKBACK_DAYS or --days says otherwise. Every software TOR in Bangkok is
+ * kept — open, closed, awarded, and direct awards alike; tor.bidding.ts sorts
+ * them into open / upcoming / closed.
  */
+export function daysSincePreviousFiscalYear(now: Date = new Date()): number {
+  const bkk = new Date(now.getTime() + 7 * 3_600_000);
+  const fyStartYear = bkk.getUTCMonth() >= 9 ? bkk.getUTCFullYear() : bkk.getUTCFullYear() - 1;
+  const previousStart = Date.UTC(fyStartYear - 1, 9, 1);
+  return Math.ceil((now.getTime() - previousStart) / 86_400_000);
+}
+
 async function openBmaFeed(runId: string, options: DiscoverOptions): Promise<Feed> {
   // Held already → not re-detailed. Queued but not yet processed counts too.
   const [tors, queued] = await Promise.all([
@@ -249,17 +275,25 @@ async function openBmaFeed(runId: string, options: DiscoverOptions): Promise<Fee
   const held = new Set([...tors, ...queued].map((r) => r.projectId));
 
   return {
-    biddableOnly: true,
+    classifyAll: true,
+    // Each row costs seconds of a slow server, so a save per row is noise.
+    progressEvery: 1,
     stream: discoverBma({
-      lookbackDays: options.lookbackDays ?? env.bmaLookbackDays,
+      lookbackDays: options.lookbackDays ?? env.bmaLookbackDays ?? daysSincePreviousFiscalYear(),
       maxPages: env.bmaMaxPages,
       // The audit re-reads everything, at the loosest bar.
       isHeld: options.full ? undefined : (projectNumber) => held.has(projectNumber),
       minTitleScore: options.full ? 1 : undefined,
+      startPage: options.startPage,
+      onPage: ({ page, rows, candidates }) =>
+        console.log(`bma page ${page}: ${rows} projects, ${candidates} new software candidates`),
       onError: (projectId, error) =>
         recordError({ runId, projectId, kind: "bma-detail-failed", message: String(error) }),
     }),
-    completed: () => setWatermark({ feed: "bma", lastFullScanAt: new Date() }),
+    // Its own field, not `feed`: one watermark row is shared with the
+    // national export, whose resume check reads `feed`. A BMA scan has no
+    // cursor to keep — only when it last finished.
+    completed: () => setWatermark({ bmaLastFullScanAt: new Date() }),
   };
 }
 

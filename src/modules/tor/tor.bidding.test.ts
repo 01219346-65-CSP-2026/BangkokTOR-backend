@@ -24,6 +24,12 @@ describe("biddingStatus", () => {
     expect(biddingStatus({ biddingStage: "purchaseReport" }, NOW)).toBe("upcoming");
   });
 
+  // Kept as TOR data, but nobody outside can bid on a direct award.
+  test("a direct award is closed at every stage", () => {
+    expect(biddingStatus({ methodId: "specific", biddingStage: "invitation", bidClosesAt: day(5) }, NOW)).toBe("closed");
+    expect(biddingStatus({ methodId: "specific", biddingStage: "tor" }, NOW)).toBe("closed");
+  });
+
   test("awarded, contracted and never-checked are closed", () => {
     expect(biddingStatus({ biddingStage: "awarded", bidClosesAt: day(5) }, NOW)).toBe("closed");
     expect(biddingStatus({ biddingStage: "contract" }, NOW)).toBe("closed");

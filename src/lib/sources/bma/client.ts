@@ -52,18 +52,23 @@ export const INVITATION = "ประกาศเชิญชวน";
 
 export const BMA_PAGE_SIZE = 200;
 
-async function getJson<T>(path: string, params: Record<string, string>): Promise<T> {
-  const response = await politeFetch(`${BMA_API}/${path}?${new URLSearchParams(params)}`);
+// A 200-row search page takes ~16 s on a normal day (measured 2026-10-02) and
+// timed out at the default 30 s on a slow one, killing a whole discovery run.
+// The list call gets the long budget; per-project calls keep the default.
+const SEARCH_TIMEOUT_MS = 120_000;
+
+async function getJson<T>(path: string, params: Record<string, string>, timeoutMs?: number): Promise<T> {
+  const response = await politeFetch(`${BMA_API}/${path}?${new URLSearchParams(params)}`, {}, { timeoutMs });
   return (await response.json()) as T;
 }
 
 /** Newest first. The portal's date filters do not work (AGENTS.md §3); sort order does. */
 export function searchPage(pageNo: number, pageSize = BMA_PAGE_SIZE): Promise<BmaPage<BmaListRow>> {
-  return getJson("Projects/GetProjectFromFilter", {
-    pageNo: String(pageNo),
-    pageSize: String(pageSize),
-    sortBy: "publishDateDesc",
-  });
+  return getJson(
+    "Projects/GetProjectFromFilter",
+    { pageNo: String(pageNo), pageSize: String(pageSize), sortBy: "publishDateDesc" },
+    SEARCH_TIMEOUT_MS,
+  );
 }
 
 export function projectDetail(uuid: string): Promise<BmaDetail> {

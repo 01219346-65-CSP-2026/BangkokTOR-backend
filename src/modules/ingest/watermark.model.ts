@@ -25,6 +25,9 @@ const watermarkSchema = new Schema(
     lastOffset: { type: Number, default: 0 },
     lastSeenProjectId: { type: String, default: null },
     lastFullScanAt: { type: Date, default: null },
+    // When a BMA portal scan last finished. Separate from the national feed's
+    // state above, which shares this row.
+    bmaLastFullScanAt: { type: Date, default: null },
     totalRows: { type: Number, default: null },
   },
   { timestamps: true, versionKey: false, collection: "watermarks" },

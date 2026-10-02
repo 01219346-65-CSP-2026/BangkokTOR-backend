@@ -8,7 +8,9 @@ import type { BiddingStage } from "../../lib/sources/egp/procurement.ts";
 //              (or could not be read yet: the stage says bids are being taken)
 //   upcoming — still at TOR or purchase-report stage; no invitation yet
 //   closed   — everything else: past the deadline, awarded, contracted,
-//              cancelled, or never checked (the national awarded history)
+//              cancelled, never checked (the national awarded history), and
+//              every direct award (เฉพาะเจาะจง): it never publishes an
+//              invitation, so nobody outside can bid on it at any stage
 
 export const BIDDING_STATUSES = ["open", "upcoming", "closed"] as const;
 export type BiddingStatus = (typeof BIDDING_STATUSES)[number];
@@ -18,18 +20,23 @@ export const DEFAULT_BIDDING: BiddingStatus[] = ["open", "upcoming"];
 
 const UPCOMING_STAGES: BiddingStage[] = ["tor", "purchaseReport"];
 
+/** A direct award: kept as TOR data, never biddable. */
+const DIRECT_AWARD = "specific";
+
 export function biddingStatus(
-  tor: { biddingStage?: string | null; bidClosesAt?: Date | null },
+  tor: { biddingStage?: string | null; bidClosesAt?: Date | null; methodId?: string | null },
   now: Date = new Date(),
 ): BiddingStatus {
+  if (tor.methodId === DIRECT_AWARD) return "closed";
   if (tor.biddingStage === "invitation" && (!tor.bidClosesAt || tor.bidClosesAt > now)) return "open";
   if (tor.biddingStage && (UPCOMING_STAGES as string[]).includes(tor.biddingStage)) return "upcoming";
   return "closed";
 }
 
 export function biddingFilter(status: BiddingStatus, now: Date = new Date()): Record<string, unknown> {
-  const open = { biddingStage: "invitation", $or: [{ bidClosesAt: { $gt: now } }, { bidClosesAt: null }] };
-  const upcoming = { biddingStage: { $in: UPCOMING_STAGES } };
+  const biddable = { methodId: { $ne: DIRECT_AWARD } };
+  const open = { ...biddable, biddingStage: "invitation", $or: [{ bidClosesAt: { $gt: now } }, { bidClosesAt: null }] };
+  const upcoming = { ...biddable, biddingStage: { $in: UPCOMING_STAGES } };
   if (status === "open") return open;
   if (status === "upcoming") return upcoming;
   return { $nor: [open, upcoming] };
@@ -101,13 +108,15 @@ const FAR_FUTURE = new Date("9999-12-31T00:00:00Z");
  * recent deadline first). Same status rule as above, expressed in $expr.
  */
 export function closingSoonStages(now: Date = new Date()) {
+  const biddable = { $ne: [{ $ifNull: ["$methodId", null] }, DIRECT_AWARD] };
   const isOpen = {
     $and: [
+      biddable,
       { $eq: ["$biddingStage", "invitation"] },
       { $or: [{ $eq: [{ $ifNull: ["$bidClosesAt", null] }, null] }, { $gt: ["$bidClosesAt", now] }] },
     ],
   };
-  const isUpcoming = { $in: [{ $ifNull: ["$biddingStage", null] }, UPCOMING_STAGES] };
+  const isUpcoming = { $and: [biddable, { $in: [{ $ifNull: ["$biddingStage", null] }, UPCOMING_STAGES] }] };
   return [
     {
       $addFields: {

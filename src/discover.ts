@@ -12,6 +12,7 @@ import { runDiscovery, type RejectedRow } from "./modules/ingest/ingest.service.
 //   bun run discover --full           # audit: re-read everything at the loosest
 //                                     # title bar, and report every rejection
 //   bun run discover --full --days 180
+//   bun run discover --page 120       # resume a scan that died at page 120
 //
 // Then `bun run worker` turns the queue into TORs (and reads each one's
 // stage and deadline). With the BMA feed, the run ends by re-checking every
@@ -32,6 +33,7 @@ await connectMongo();
 const result = await runDiscovery({
   limit: arg("--limit"),
   lookbackDays: arg("--days"),
+  startPage: arg("--page"),
   full: process.argv.includes("--full"),
   onRejected: (row) => rejects.push(row),
 });
@@ -51,10 +53,7 @@ await Bun.write(
     .join("\n") + "\n",
 );
 
-const byReason = Object.groupBy(rejects, (r) => r.reason);
-console.log(
-  `\nRejected: ${rejects.length} (not software ${byReason["not-software"]?.length ?? 0}, direct award ${byReason["not-biddable"]?.length ?? 0})`,
-);
+console.log(`\nRejected as not software: ${rejects.length}`);
 console.log("Highest-scoring rejects — the likeliest misses:");
 for (const r of rejects.slice(0, 20)) {
   console.log(`  ${String(r.score).padStart(4)}  ${r.reason.padEnd(12)} ${r.projectId}  ${r.title.slice(0, 80)}`);
