@@ -8,11 +8,11 @@ import {
 } from "../../lib/ai/types.ts";
 import { AI_RULES, LEGITIMACY_RULES, RULES, ruleByCode } from "../../lib/grade/rules.ts";
 import { gradeFindings, skipFairness, type Finding } from "../../lib/grade/score.ts";
-import { ChunkModel } from "../extract/chunk.model.ts";
+import { TorTextModel } from "../extract/torText.model.ts";
 import { recordError } from "../ingest/ingest.service.ts";
 import { GRADER_VERSION, SUMMARY_VERSION, TorModel } from "../tor/tor.model.ts";
 
-// Stage 6: chunks -> findings -> a stored grade.
+// Stage 6: full text -> findings -> a stored grade.
 //
 // The deterministic rules never reach the model: they compare the document
 // against the CKAN record we already hold, which is both free and exact.
@@ -96,7 +96,7 @@ function toFindings(raw: RuleFinding[], chunks: GradeChunk[]): Finding[] {
 }
 
 /**
- * Grade one TOR from its stored chunks.
+ * Grade one TOR from its stored full text.
  *
  * Legitimacy runs first and, when it fails, fairness is skipped entirely —
  * that is the rulebook's rule, and it also saves the larger half of the model
@@ -106,20 +106,19 @@ export async function gradeTor(torId: Types.ObjectId | string): Promise<GradeOut
   const tor = await TorModel.findById(torId).lean();
   if (!tor) return { ok: false, reason: "tor-not-found" };
 
-  const rows = await ChunkModel.find({ torId }).sort({ index: 1 }).lean();
-  if (rows.length === 0) {
+  const storedText = await TorTextModel.findOne({ torId }).lean();
+  if (!storedText) {
     await TorModel.updateOne(
       { _id: torId },
-      { $set: { status: "extraction_incomplete", statusReason: "no-chunks" } },
+      { $set: { status: "extraction_incomplete", statusReason: "no-text" } },
     );
-    return { ok: false, reason: "no-chunks" };
+    return { ok: false, reason: "no-text" };
   }
 
-  const chunks: GradeChunk[] = rows.map((r) => ({
-    index: r.index,
-    headingPath: r.headingPath,
-    text: r.text,
-  }));
+  // The grader still expects chunks. feat/91 replaces this temporary adapter.
+  const chunks: GradeChunk[] = [
+    { index: 0, headingPath: [], text: storedText.fullText },
+  ];
 
   const grader = createGrader();
   const findings: Finding[] = [...checkDeterministic(tor, chunks)];
@@ -216,7 +215,7 @@ function isLegitimacy(code: string): boolean {
   return LEGITIMACY_RULES.some((r) => r.code === code);
 }
 
-/** TORs with chunks but no current grade. */
+/** TORs awaiting a grade or needing a newer grading version. */
 export async function findUngraded(limit = 20) {
   return TorModel.find({
     status: "extraction_pending",

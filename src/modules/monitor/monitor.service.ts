@@ -169,7 +169,7 @@ export async function listQueueRows(input: {
       updatedAt: r.updatedAt,
       // Extraction rows carry result counters; ingest rows do not.
       pdfCount: r.pdfCount ?? null,
-      chunkCount: r.chunkCount ?? null,
+      textChars: r.textChars ?? null,
     })),
     page,
     limit,

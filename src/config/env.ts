@@ -70,6 +70,9 @@ export const env = {
   ollamaUrl: process.env.OLLAMA_URL ?? "http://localhost:11434",
   ollamaModel: process.env.OLLAMA_MODEL ?? "qwen2.5:7b",
   aiTimeoutMs: Number(process.env.AI_TIMEOUT_MS ?? 300_000),
+
+  // Max amount of characters to extract from tor before truncating.
+  maxFulltextChars: Number(process.env.MAX_FULLTEXT_CHARS ?? 400_000),
 } as const;
 
 export const isProduction = env.nodeEnv === "production";

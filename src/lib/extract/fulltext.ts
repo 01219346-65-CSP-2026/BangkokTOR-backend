@@ -1,4 +1,4 @@
-import type { LoadedPdf } from "./loader.ts";
+import { getNodeContent, walk, type LoadedPdf } from "./loader.ts";
 
 // ============================================================================
 // Whole-text extraction — YOU write this file (feat/90). See LEARNING.md.
@@ -74,7 +74,13 @@ export function fileHeader(filename: string): string {
  *     LoaderNode. Add them to the type in loader.ts (step 1 in LEARNING.md).
  */
 export function pdfToText(pdf: LoadedPdf): string {
-  throw new Error("TODO(feat/90): pdfToText — see LEARNING.md step 2");
+  //throw new Error("TODO(feat/90): pdfToText — see LEARNING.md step 2");
+  const pdf_text: string[] = [];
+
+  for (const node of walk(pdf.doc)) {
+    pdf_text.push(getNodeContent(node));
+  }
+  return pdf_text.filter(Boolean).join("\n");
 }
 
 /**
@@ -94,7 +100,51 @@ export function buildFullText(
   pdfs: LoadedPdf[],
   maxChars: number = DEFAULT_MAX_FULLTEXT_CHARS,
 ): FullText {
-  throw new Error("TODO(feat/90): buildFullText — see LEARNING.md step 2");
+  const all_pdf_texts: string[] = [];
+  const file_spans: FileSpan[] = [];
+  let truncated = false;
+  let chars = 0;
+
+  //throw new Error("TODO(feat/90): buildFullText — see LEARNING.md step 2");
+  for (const pdf of pdfs) {
+    const pdf_text = pdfToText(pdf);
+    if (!pdf_text) continue;
+    const header = fileHeader(pdf.name);
+    const section = header + pdf_text;
+    const separatorLength = all_pdf_texts.length > 0 ? FILE_SEPARATOR.length : 0;
+    const available = maxChars - chars - separatorLength;
+
+    if (available < header.length) {
+      truncated = true;
+      break;
+    }
+
+    const includedSection = section.slice(0, available);
+    all_pdf_texts.push(includedSection);
+    const start = chars + separatorLength;
+    const end = start + includedSection.length;
+    file_spans.push({
+      filename: pdf.name,
+      pages: pdf.pages,
+      start,
+      end,
+    });
+    chars = end;
+
+    if (includedSection.length < section.length) {
+      truncated = true;
+      break;
+    }
+  }
+
+  const full_text = all_pdf_texts.join(FILE_SEPARATOR);
+
+  return {
+    text: full_text,
+    chars: full_text.length,
+    truncated,
+    files: file_spans,
+  };
 }
 
 /**
@@ -104,5 +154,15 @@ export function buildFullText(
  * Hint: files.find(...) with start <= offset < end.
  */
 export function fileAt(files: FileSpan[], offset: number): string | null {
-  throw new Error("TODO(feat/90): fileAt — see LEARNING.md step 2");
+  //throw new Error("TODO(feat/90): fileAt — see LEARNING.md step 2");
+  for (const span of files) {
+    if (offset < span.start) {
+      return null;
+    }
+    else if (offset >= span.start && offset < span.end) {
+      return span.filename;
+    }
+  }
+
+  return null;
 }
