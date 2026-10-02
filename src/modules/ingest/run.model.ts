@@ -21,6 +21,11 @@ const runSchema = new Schema(
       notSoftware: { type: Number, default: 0 },
       // In-scope rows for projects already held, whose portal fields were rewritten.
       refreshed: { type: Number, default: 0 },
+      // Software rows dropped because nobody outside can bid (BMA feed only).
+      notBiddable: { type: Number, default: 0 },
+      // BMA feed: TORs whose stage/deadline were re-checked, and how many are open.
+      biddingChecked: { type: Number, default: 0 },
+      open: { type: Number, default: 0 },
       failed: { type: Number, default: 0 },
     },
 

@@ -14,7 +14,7 @@ import { ExtractionQueueModel } from "./extraction.model.ts";
 import { buildFullText } from "../../lib/extract/fulltext.ts";
 import { TorTextModel } from "./torText.model.ts";
 
-// Stage ④–⑤: bundle on disk -> PDFs -> text -> chunks a grader can read.
+// Stage ④–⑤: bundle on disk -> PDFs -> full text a grader can read.
 
 export type EnqueueOptions = { limit?: number };
 
@@ -85,7 +85,7 @@ export async function processBundle(queued: ExtractRow): Promise<BundleOutcome> 
 
 /**
  * Nothing downstream reads the files once extraction is done: grading, skill
- * tags and summaries all read tor_chunks. Keeping them cost ~67 MB a project
+ * tags and summaries all read tor_texts. Keeping them cost ~67 MB a project
  * (59 GB for 887). The documents rows stay — filename, pages, text layer — and
  * their url is the e-GP bundle link, which the site offers instead.
  */
@@ -221,7 +221,7 @@ async function extractBundle(queued: ExtractRow): Promise<BundleOutcome> {
     { $set: { status: "extraction_pending", statusReason: null } },
   );
 
-  // Fresh chunks are the best text the skill tags will ever see.
+  // Tag the TOR now that it has reached the grading queue.
   await tagTorSkills(row.torId);
 
   // The loader JSON is an intermediate. The expanded PDFs go too, in

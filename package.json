@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "bun run --watch index.ts",
     "start": "bun run index.ts",
+    "discover": "bun run src/discover.ts",
     "worker": "bun run src/worker.ts",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
@@ -15,6 +16,9 @@
     "backfill-skills": "bun run src/backfill-skills.ts",
     "purge-out-of-scope": "bun run src/purge-out-of-scope.ts",
     "backfill-classify": "bun run src/backfill-classify.ts",
+    "refresh-bidding": "bun run src/refresh-bidding.ts",
+    "backup-collections": "bun run src/backup-collections.ts",
+    "move-national-out": "bun run src/move-national-out.ts",
     "cleanup-document-files": "bun run src/cleanup-document-files.ts"
   },
   "devDependencies": {

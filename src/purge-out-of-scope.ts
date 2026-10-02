@@ -6,8 +6,8 @@ import { connectMongo, disconnectMongo } from "./db/mongo.ts";
 import { resolveDataset } from "./lib/sources/ckan/catalog.ts";
 import { resolveBulk } from "./lib/sources/govspending/catalog.ts";
 import { SOURCE_ID } from "./lib/sources/ckan/normalize.ts";
-import { ChunkModel } from "./modules/extract/chunk.model.ts";
 import { ExtractionQueueModel } from "./modules/extract/extraction.model.ts";
+import { TorTextModel } from "./modules/extract/torText.model.ts";
 import { DocumentModel } from "./modules/ingest/document.model.ts";
 import { ErrorModel } from "./modules/ingest/error.model.ts";
 import { QueueModel, type QueueStatus } from "./modules/ingest/queue.model.ts";
@@ -16,7 +16,7 @@ import { TorModel } from "./modules/tor/tor.model.ts";
 
 // Delete every TOR the website no longer covers — anything that is not
 // software work from the current fiscal year — with everything hanging off it:
-// documents, chunks, extraction rows, errors, queue rows, and the files on disk.
+// documents, full texts, extraction rows, errors, queue rows, and the files on disk.
 //
 //   bun run purge-out-of-scope                       # report only
 //   bun run purge-out-of-scope --apply               # delete
@@ -86,7 +86,7 @@ const stale = { status: { $in: ["pending", "failed"] as QueueStatus[] } };
 
 const counts = {
   documents: await countIn((ids, pids) => DocumentModel.countDocuments(byTor(ids, pids))),
-  chunks: await countIn((ids) => ChunkModel.countDocuments({ torId: { $in: ids } })),
+  torTexts: await countIn((ids) => TorTextModel.countDocuments({ torId: { $in: ids } })),
   extractionQueue: await countIn((ids, pids) => ExtractionQueueModel.countDocuments(byTor(ids, pids))),
   ingestErrors: await countIn((_ids, pids) => ErrorModel.countDocuments({ projectId: { $in: pids } })),
   ingestQueue: await countIn((_ids, pids) => QueueModel.countDocuments({ projectId: { $in: pids } })),
@@ -130,7 +130,7 @@ for (let i = 0; i < torIds.length; i += BATCH) {
 
   await Promise.all([
     DocumentModel.deleteMany(byTor(ids, pids)),
-    ChunkModel.deleteMany({ torId: { $in: ids } }),
+    TorTextModel.deleteMany({ torId: { $in: ids } }),
     ExtractionQueueModel.deleteMany(byTor(ids, pids)),
     ErrorModel.deleteMany({ projectId: { $in: pids } }),
     QueueModel.deleteMany({ projectId: { $in: pids } }),

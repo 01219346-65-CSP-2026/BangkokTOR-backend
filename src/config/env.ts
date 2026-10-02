@@ -24,10 +24,18 @@ export const env = {
   // Ingestion. Not required at boot — the API serves what is already stored
   // whether or not ingestion can run.
   datagothKey: process.env.DATAGOTH_KEY ?? "",
-  // Where discovery reads e-GP projects from. "govspending" (default) is DGA's
-  // bulk export, which carries the current fiscal year; "ckan" is data.go.th's
-  // datastore, which lags a year behind. See AGENTS.md §3.
-  egpFeed: (process.env.EGP_FEED === "ckan" ? "ckan" : "govspending") as "ckan" | "govspending",
+  // Where discovery reads e-GP projects from (AGENTS.md §3):
+  //   "bma" (default)  — the BMA portal. Lists projects the day they are
+  //                      announced, so it is the only feed with OPEN tenders.
+  //   "govspending"    — DGA's bulk export. Contracted projects only.
+  //   "ckan"           — data.go.th's datastore. Contracted, and a year behind.
+  egpFeed: (["ckan", "govspending"].includes(process.env.EGP_FEED ?? "")
+    ? process.env.EGP_FEED
+    : "bma") as "ckan" | "govspending" | "bma",
+  // BMA discovery reads newest-first back this far. Bidding windows are weeks
+  // long; 90 days also catches projects still between TOR and invitation.
+  bmaLookbackDays: Number(process.env.BMA_LOOKBACK_DAYS ?? 90),
+  bmaMaxPages: Number(process.env.BMA_MAX_PAGES ?? 40),
   // Unset = the newest fiscal year the feed has published, resolved per run.
   // Set a Buddhist-era year (e.g. 2569) to pin it. CKAN_FISCAL_YEAR is the old name.
   egpFiscalYear: (() => {
@@ -39,7 +47,7 @@ export const env = {
   sourceDir: process.env.SOURCE_DIR ?? "./data/source",
   blobDir: process.env.BLOB_DIR ?? "./data/blobs",
   // Bundles and their PDFs are deleted once extraction has read them — only
-  // the text (tor_chunks) is used downstream, and keeping the files costs
+  // the text (tor_texts) is used downstream, and keeping the files costs
   // ~67 MB per project. The site links to the e-GP zip instead. Set true to
   // keep them for debugging.
   keepDocumentFiles: process.env.KEEP_DOCUMENT_FILES === "true",
@@ -116,7 +124,8 @@ export function assertServeConfig(): void {
 // Ingestion needs the CKAN key; serving does not. Called at the start of a run
 // so the failure is one clear message, not a 403 sixteen pages in.
 export function assertIngestConfig(): void {
-  if (!env.datagothKey) {
+  // The BMA portal needs no key.
+  if (env.egpFeed !== "bma" && !env.datagothKey) {
     throw new Error(
       "DATAGOTH_KEY is not set — CKAN discovery cannot run. Copy it from ~/Code/testTOR/.env",
     );

@@ -4,7 +4,7 @@ import { SKILL_VOCABULARY } from "../../modules/techstack/techstack.vocabulary.t
 import { SKILL_ALIASES, tagSkills, type SkillSource } from "./tagSkills.ts";
 
 function slugs(text: string): string[] {
-  return tagSkills([{ text, chunkIndex: 0 }]).map((t) => t.slug).sort();
+  return tagSkills([{ text }]).map((t) => t.slug).sort();
 }
 
 describe("tagSkills", () => {
@@ -64,22 +64,21 @@ describe("tagSkills", () => {
 
   test("evidence is a verbatim quote from the source it cites", () => {
     const sources: SkillSource[] = [
-      { text: "จ้างพัฒนาระบบ", chunkIndex: null },
-      { text: "ข้อ 4.2 ผู้รับจ้าง   ต้องใช้ Docker ในการติดตั้ง", chunkIndex: 3 },
+      { text: "จ้างพัฒนาระบบ" },
+      { text: "ข้อ 4.2 ผู้รับจ้าง   ต้องใช้ Docker ในการติดตั้ง" },
     ];
     const [tag] = tagSkills(sources);
     expect(tag?.slug).toBe("docker");
-    expect(tag?.chunkIndex).toBe(3);
     expect(isVerbatim(tag!.evidence, sources[1]!.text)).toBe(true);
   });
 
   test("one tag per skill, from the first source that mentions it", () => {
     const tags = tagSkills([
-      { text: "ระบบ GIS", chunkIndex: null },
-      { text: "QGIS อีกครั้ง", chunkIndex: 1 },
+      { text: "ระบบ GIS" },
+      { text: "QGIS อีกครั้ง" },
     ]);
     expect(tags).toHaveLength(1);
-    expect(tags[0]?.chunkIndex).toBeNull();
+    expect(tags[0]?.evidence).toBe("ระบบ GIS");
   });
 });
 

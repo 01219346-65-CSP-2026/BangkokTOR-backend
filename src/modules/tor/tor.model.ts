@@ -1,5 +1,6 @@
 import { Schema, model, type HydratedDocument, type InferSchemaType, type Types } from "mongoose";
 import { WORK_TYPES } from "../../lib/classify/workType.ts";
+import { BIDDING_STAGES } from "../../lib/sources/egp/procurement.ts";
 
 // The canonical TOR document (§4.3). Money is THB integers, dates are CE —
 // both converted at the adapter edge, never here.
@@ -14,8 +15,8 @@ export const TOR_CATEGORIES = [
 export const TOR_CONTRACTS = ["purchase", "hire", "construction", "lease"] as const;
 export const TOR_METHODS = ["eBidding", "specific", "competitive"] as const;
 // `bestMatch` needs the caller's skills (ListInput.skills); without them it
-// falls back to `newest` — see tor.service.ts listTors.
-export const TOR_SORTS = ["newest", "oldest", "budgetHigh", "budgetLow", "bestMatch"] as const;
+// falls back to `closingSoon`, the default — see tor.service.ts listTors.
+export const TOR_SORTS = ["closingSoon", "newest", "oldest", "budgetHigh", "budgetLow", "bestMatch"] as const;
 export const SKILL_TAG_SOURCES = ["keyword", "llm"] as const;
 export const TOR_STATUS_IDS = [
   "inProgress", "contracted", "deliveredOnTime", "deliveredComplete", "contractEnded",
@@ -76,6 +77,31 @@ const torSchema = new Schema(
     contractSignedAt: { type: Date, default: null },
     contractEndsAt: { type: Date, default: null },
 
+    // ── Bidding (modules/bidding). Where the project stands in e-GP's flow,
+    // and the bid deadline read out of its ประกาศเชิญชวน. Null until checked;
+    // a null deadline means "not published yet" or "could not be read", never
+    // a guess (FR-13). See AGENTS.md §3 for where each comes from.
+    bmaProjectId: { type: String, default: null },
+    biddingStage: { type: String, enum: [...BIDDING_STAGES, null], default: null },
+    // e-GP's own step name, kept so a stage can be audited, not trusted.
+    stageFlowName: { type: String, default: null },
+    stageCheckedAt: { type: Date, default: null },
+    bidOpensAt: { type: Date, default: null },
+    bidClosesAt: { type: Date, default: null },
+    deadlineEvidence: {
+      type: new Schema(
+        {
+          // The sentence the date was read from, verbatim.
+          quote: { type: String, default: "" },
+          // The ประกาศเชิญชวน PDF on the source portal.
+          documentUrl: { type: String, default: "" },
+          publishedAt: { type: Date, default: null },
+        },
+        { _id: false },
+      ),
+      default: null,
+    },
+
     category: { type: String, enum: TOR_CATEGORIES, default: null },
     contractType: { type: String, enum: TOR_CONTRACTS, default: null },
     methodId: { type: String, enum: TOR_METHODS, default: null },
@@ -130,7 +156,6 @@ const torSchema = new Schema(
           // finding without one is rejected, not stored.
           evidence: { type: String, default: "" },
           checked: { type: Boolean, default: true },
-          chunkIndex: { type: Number, default: null },
         },
       ],
       default: [],
@@ -143,7 +168,7 @@ const torSchema = new Schema(
     graderModel: { type: String, default: null },
 
     // ── Summary (step 8). Unlike the grade, this IS public — it is what the
-    // detail page shows where raw document chunks used to be.
+    // detail page shows as the gist of the documents.
     //
     // Which is why it is the one piece of model output that has to be built
     // incapable of accusing anyone: a bullet is generated prose about a named
@@ -154,9 +179,6 @@ const torSchema = new Schema(
         {
           _id: false,
           text: String,
-          // Which chunk produced it, so the serializer can cite a filename and
-          // page range. A point a reader cannot check is worth less.
-          chunkIndex: { type: Number, default: null },
         },
       ],
       default: [],
@@ -178,7 +200,6 @@ const torSchema = new Schema(
           source: { type: String, enum: SKILL_TAG_SOURCES, required: true },
           // Verbatim window around the hit, so a tag can be checked, not trusted.
           evidence: { type: String, default: "" },
-          chunkIndex: { type: Number, default: null },
         },
       ],
       default: [],
@@ -216,6 +237,8 @@ torSchema.index({ status: 1, announcedAt: -1 });
 // front of every listing, so the listing index has to start with them.
 torSchema.index({ isSoftware: 1, fiscalYear: 1, status: 1, announcedAt: -1 });
 torSchema.index({ projectStatus: 1 });
+// The default listing: what is open, soonest deadline first.
+torSchema.index({ biddingStage: 1, bidClosesAt: 1 });
 torSchema.index({ workTypes: 1 });
 // Best-match scoring reads requiredSkills.slug; the backfill finds stale tags.
 torSchema.index({ "requiredSkills.slug": 1 });

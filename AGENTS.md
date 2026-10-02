@@ -114,6 +114,63 @@ outside `src/` deliberately: the code in this repo is being rebuilt file by file
 archive exists so hard-won live-API findings (below) are not rediscovered, not so they can
 be copied in wholesale.
 
+### Open tenders and the bid deadline (the default feed, 2026-10-02)
+
+**The national feeds only ever contain awarded projects.** govspending's `egp-contract`
+and CKAN both export projects that already have a contract, so every TOR they produce
+has a winner. Measured: all 4,482 stored TORs had `winnerName` and `contractSignedAt`.
+A site meant to show what can still be bid on needs a source that lists a project while it
+is open. **That source is the BMA portal (Source A)**, now the default feed
+(`EGP_FEED=bma`, `lib/sources/bma/`). It lists projects the day they are announced, needs
+no key, and is not Turnstile-gated. Its `projectNumber` **is** the e-GP projectId. It only
+covers BMA agencies, which is the product's Bangkok scope. National agencies based in
+Bangkok are reachable only through process5's gated search, which is not used.
+
+- Discovery reads newest-first back `BMA_LOOKBACK_DAYS` (90). It sends a detail request
+  only for title candidates not already held (~4 s each, so this matters). It drops direct
+  awards (เฉพาะเจาะจง), since nobody outside can bid on them.
+- **Stage** comes from process5's announcement service, per project. These lookups are
+  not gated (`lib/sources/egp/procurement.ts`):
+  `…/egp-oann10-service/pb/a-egp-allt-project/announcement/getProcurementDetail?projectId=`
+  gives `flowName` (จัดทำ TOR / รายงานขอซื้อขอจ้าง / หนังสือเชิญชวน/ประกาศเชิญชวน /
+  อนุมัติ…ผู้ชนะ / จัดทำสัญญา), and `getProjectDetail` gives `budgetYear`.
+- **The deadline is in the ประกาศเชิญชวน, as one sentence** (`lib/thai/bidDeadline.ts`):
+  "ผู้ยื่นข้อเสนอต้องเสนอราคา…ในวันที่ ๒๐ ตุลาคม ๒๕๖๙ ระหว่างเวลา ๐๙.๐๐ น. ถึง ๑๒.๐๐ น."
+  `bidClosesAt` is the closing time at +07:00. The quote and source URL are stored in
+  `deadlineEvidence`. Read from, in order:
+  1. the newest ประกาศเชิญชวน on the BMA portal (one small PDF, sometimes a scan);
+  2. `annoudoc_*` in e-GP's **signed** bundle, `apv-common/infoProcureDocAnnounZip`.
+- **Temp vs signed bundle.** `infoProcureDocAnnounZipTemp`, which extraction reads, is
+  the **draft** set. Its `annoudoc_*` has the date left blank ("ในวันที่ ระหว่างเวลา น.
+  ถึง น."). The plain `infoProcureDocAnnounZip` is the signed set published with the
+  invitation, and that is where the filled-in date is. It does not exist before the
+  invitation.
+- PDF text gotchas, both real: tone marks dropped ("ผูยื่นขอเสนอ"), and tone marks drawn
+  from the Thai private-use block (U+F70A for ่). The parser strips marks and maps the
+  private-use block back before matching.
+- An unreadable deadline is left null and recorded in `ingest_errors`
+  (`deadline-not-found`, `invitation-scanned`, …). It is never estimated.
+- `modules/tor/tor.bidding.ts` defines **open** (stage invitation, deadline not past),
+  **upcoming** (TOR / purchase-report stage) and **closed** (everything else). The
+  public list defaults to open+upcoming, sorted `closingSoon`. Every BMA discovery run
+  re-checks the TORs that can still move; `bun run refresh-bidding` does the same on its
+  own. Run it all with `bun run discover`, then `bun run worker`.
+- **Audit for misses:** `bun run discover --full [--days N]` re-reads the whole window at
+  the loosest title bar, held projects included. It writes every rejected candidate, with
+  its software score and the rules that fired, to `data/reports/discover-<date>.tsv`,
+  highest score first. Tune `lib/classify/software.ts` from that file, not from guesses.
+- **National history is out of the live collections (2026-10-02).** It was moved to
+  `*_bk_2_10_2026` by `bun run backup-collections --apply` then `bun run move-national-out
+  --apply`. Live `tors` holds only BMA tenders. The backup is the analysis dataset (budgets,
+  agencies, winners, contract dates). `move-national-out` refuses to delete anything the
+  day's backup does not hold.
+- The สถานะโครงการ filter is this stage (`stage=`, `tor.bidding.ts stageFilter`), not
+  the portal's `projectStatus` column, which says ระหว่างดำเนินการ for nearly every
+  row. Rows never stage-checked (the national history) count as `contract` when they have
+  a signed contract, and as `cancelled` when the portal says ยกเลิกโครงการ. A cancelled
+  project keeps the `flowName` of the step it stopped at, so cancellation is read from
+  `getProjectDetail.projectStatus` ("R"; "A" = active).
+
 ### Source A — the BMA e-GP API
 
 Base `https://appapi` host `https://egp2.bangkok.go.th/appapi/api`, files on
@@ -627,9 +684,9 @@ Still genuinely undecided:
   before it is incurred.
 - **Notification channel.** FR-17 says email; SRS §7.2 lists email vs. in-app vs. both as
   unfinalized.
-- **Where the deadline comes from**, given neither source supplies one (§3). FR-13 needs
-  it. Derive from announcement publish date, extract from the PDF, or take it back to the
-  SRS — do not invent a deadline field.
+- ~~Where the deadline comes from~~ — **decided 2026-10-02**: it's extracted from the
+  ประกาศเชิญชวน PDF and left null when it can't be read. See §3, "Open tenders and the bid
+  deadline".
 
 ---
 

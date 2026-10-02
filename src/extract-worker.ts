@@ -5,7 +5,7 @@ import { ExtractionQueueModel, type ExtractionDoc } from "./modules/extract/extr
 import { recordError } from "./modules/ingest/ingest.service.ts";
 
 // The extraction worker (stage ④–⑤): expand a bundle, read the PDFs, triage
-// digital vs scanned, chunk what is readable.
+// digital vs scanned, store the full text of what is readable.
 //
 //   bun run extract-worker
 //

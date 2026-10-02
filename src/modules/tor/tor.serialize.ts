@@ -3,6 +3,8 @@ import { ruleByCode } from "../../lib/grade/rules.ts";
 import type { IngestDocumentLean } from "../ingest/document.model.ts";
 import type { TorLean } from "./tor.model.ts";
 import type { TorTextLean } from "../extract/torText.model.ts";
+import { biddingStatus, procurementStage, type BiddingStatus } from "./tor.bidding.ts";
+import type { BiddingStage } from "../../lib/sources/egp/procurement.ts";
 import { egpListingUrl, isLegacyEgpUrl, SOURCE_ID as CKAN_SOURCE_ID } from "../../lib/sources/ckan/normalize.ts";
 
 // THE FR-19 GATE.
@@ -72,6 +74,12 @@ export type PublicTor = Omit<
   signalCount: number;
   signals: PublicSignal[];
   requiredSkills: PublicRequiredSkill[];
+  /** Open / upcoming / closed, derived on read so it is never stale against
+   *  the clock (tor.bidding.ts). The deadline itself is `bidClosesAt`. */
+  biddingStatus: BiddingStatus;
+  /** สถานะโครงการ: the procurement stage, the same rule the filter uses
+   *  (tor.bidding.ts procurementStage). Null when nothing says. */
+  stage: BiddingStage | null;
   /** Only on a list request that sent the reader's skills — see listScored. */
   fitScore?: number | null;
   matchedSkillCount?: number;
@@ -91,16 +99,11 @@ export type PublicTorDocument = {
 };
 
 /**
- * One summary point, with the page it came from.
+ * One summary point. The PDF is linked from `documents`, so a reader who wants
+ * the source text has it; what the record owes them here is the gist.
  *
- * This replaced `extractedSections`, which shipped the raw PDF chunks — up to
- * 24 of them at ~6,000 characters. The PDF is linked from `documents`, so a
- * reader who wants the source text has it; what the record owes them here is
- * the gist. It also takes a ~144 KB worst case off the detail response.
- *
- * `filename` is null when the bullet's chunk can no longer be resolved, which
- * happens if chunks were re-extracted after the summary was written. The point
- * is still true, it just cannot be cited.
+ * `filename`, `pageStart` and `pageEnd` are kept for the frontend's type and
+ * are always null/0 — a point is not cited to a page.
  */
 export type PublicTorSummaryPoint = {
   id: string;
@@ -150,8 +153,10 @@ export function serialize(tor: TorLean): PublicTor {
   const fired = (ruleFindings ?? []).filter((f) => f.fired);
 
   return {
-    ...(rest as Omit<PublicTor, "id" | "signalCount" | "signals" | "requiredSkills">),
+    ...(rest as Omit<PublicTor, "id" | "signalCount" | "signals" | "requiredSkills" | "biddingStatus" | "stage">),
     id: String(_id),
+    biddingStatus: biddingStatus(tor),
+    stage: procurementStage(tor),
     sourceUrl: publicSourceUrl(tor),
     requiredSkills: (requiredSkills ?? []).map((s) => ({ slug: s.slug, evidence: s.evidence ?? "" })),
     signalCount: fired.length,
@@ -163,10 +168,6 @@ export function serialize(tor: TorLean): PublicTor {
 
 /**
  * Detail-only content: the documents, and the summary points read off them.
- *
- * `chunks` is still a parameter even though no chunk text is emitted — it is
- * how a bullet's chunkIndex resolves to a filename and page range, which is
- * what makes a generated point checkable against the source.
  */
 export function serializeDetail(
   tor: TorLean,
@@ -207,10 +208,7 @@ export function serializeDetail(
     // written by an older SUMMARY_VERSION, or by a future caller that forgets,
     // are screened here regardless.
     summaryPoints: sanitizeBullets(
-      (tor.summaryBullets ?? []).map((bullet) => ({
-        text: bullet.text ?? "",
-        chunkIndex: bullet.chunkIndex ?? -1,
-      })),
+      (tor.summaryBullets ?? []).map((bullet) => ({ text: bullet.text ?? "" })),
     ).map((bullet, position) => {
       return {
         // Bullets carry no _id of their own (_id: false on the subdocument),
@@ -244,7 +242,6 @@ export function serializeGrade(tor: TorLean) {
       phase: f.phase,
       checked: f.checked,
       evidence: f.evidence,
-      chunkIndex: f.chunkIndex,
     })),
   };
 }
