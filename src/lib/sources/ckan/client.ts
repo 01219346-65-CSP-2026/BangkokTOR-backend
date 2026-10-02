@@ -1,6 +1,6 @@
 import { politeFetch } from "../../http/politeClient.ts";
 import { env } from "../../../config/env.ts";
-import { PHANTOM_COLUMNS } from "./columns.ts";
+import { isPhantomColumn } from "./columns.ts";
 
 const CKAN_URL = "https://opend.data.go.th/get-ckan/datastore_search";
 
@@ -20,12 +20,16 @@ export async function fetchPage(
   resourceId: string,
   offset: number,
   limit: number = CKAN_PAGE_SIZE,
+  // Exact-match column filters, applied by CKAN before paging — `total` and
+  // `offset` then count filtered rows, so a filtered scan resumes correctly.
+  filters?: Record<string, string>,
 ): Promise<CkanPage> {
   const params = new URLSearchParams({
     resource_id: resourceId,
     limit: String(limit),
     offset: String(offset),
   });
+  if (filters) params.set("filters", JSON.stringify(filters));
 
   const response = await politeFetch(
     `${CKAN_URL}?${params}`,
@@ -62,7 +66,7 @@ export function detectPhantomColumns(
 ): boolean {
   if (!sample || fields.length === 0) return false;
 
-  const declared = PHANTOM_COLUMNS.filter((c) => fields.includes(c));
+  const declared = fields.filter(isPhantomColumn);
   if (declared.length === 0) return false;
 
   const populated = fields.filter((f) => {
@@ -75,9 +79,7 @@ export function detectPhantomColumns(
 
 
 export function realignRow(row: CkanRow, fields: string[]): CkanRow {
-  const realFields = fields.filter(
-    (f) => !(PHANTOM_COLUMNS as readonly string[]).includes(f),
-  );
+  const realFields = fields.filter((f) => !isPhantomColumn(f));
 
   const values = fields.map((f) => row[f]).filter((v) => v !== undefined);
   const out: CkanRow = {};

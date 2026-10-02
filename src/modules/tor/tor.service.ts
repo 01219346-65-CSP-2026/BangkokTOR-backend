@@ -1,8 +1,21 @@
+import { resolve, sep } from "node:path";
 import { isValidObjectId, type QueryFilter } from "mongoose";
+import { env } from "../../config/env.ts";
 import { DocumentModel } from "../ingest/document.model.ts";
+import type { WorkTypeId } from "../../lib/classify/workType.ts";
 import { serialize, serializeDetail, serializeGrade } from "./tor.serialize.ts";
 import { TOR_CATEGORIES, TorModel, type Tor, type TorLean } from "./tor.model.ts";
 import { TorTextModel } from "../extract/torText.model.ts";
+
+import {
+  TOR_CATEGORIES,
+  TOR_METHODS,
+  TOR_SORTS,
+  TorModel,
+  type Tor,
+  type TorLean,
+  type TorStatus,
+} from "./tor.model.ts";
 
 // Services return plain data (6). Every read that leaves this file has been
 // through serialize() — the FR-19 gate — except getTorGrade, which is the
@@ -12,16 +25,85 @@ export type ListInput = {
   q?: string;
   agency?: string;
   category?: (typeof TOR_CATEGORIES)[number];
-  isSoftware?: boolean;
+  method?: (typeof TOR_METHODS)[number];
+  /** สถานะโครงการ exactly as the portal ships it — the options come from getStats(). */
+  projectStatus?: string;
+  /** One software work type (lib/classify/workType.ts); matches TORs carrying it. */
+  workType?: WorkTypeId;
   province?: string;
   minBudget?: number;
   maxBudget?: number;
+  publishedFrom?: Date;
+  publishedTo?: Date;
+  sort?: (typeof TOR_SORTS)[number];
+  /** The reader's profile skill slugs. Present → every row is scored. */
+  skills?: string[];
+  /** Fit bands to keep. Needs `skills`; ignored without them. */
+  fit?: FitBand[];
   page: number;
   limit: number;
 };
 
+/** Mirrors the frontend's fitBand() in src/lib/torFit.ts — keep in step. */
+export const FIT_BANDS = ["strong", "moderate", "weak"] as const;
+export type FitBand = (typeof FIT_BANDS)[number];
+const FIT_RANGES: Record<FitBand, { $gte: number; $lt?: number }> = {
+  strong: { $gte: 70 },
+  moderate: { $gte: 40, $lt: 70 },
+  weak: { $gte: 0, $lt: 40 },
+};
+
+/** `newest` is the historical default (announcedAt desc) — every existing
+ *  caller that omits `sort` must keep seeing that order.
+ *
+ *  `bestMatch` only means something on the scored path (listScored); a caller
+ *  that asks for it without skills gets `newest`. Rows with no tagged skills
+ *  have a null fitScore, which sorts below every number, so they come last. */
+const SORTS: Record<(typeof TOR_SORTS)[number], Record<string, 1 | -1>> = {
+  newest: { announcedAt: -1 },
+  oldest: { announcedAt: 1 },
+  budgetHigh: { budget: -1 },
+  budgetLow: { budget: 1 },
+  bestMatch: { fitScore: -1, matchedSkillCount: -1, announcedAt: -1, _id: -1 },
+};
+
+/** The statuses the public list shows — see the note in listTors. Agency
+ *  and category counts use the same set, so a count always matches what
+ *  choosing that option returns. */
+const LISTED = { $in: ["graded", "published", "documents_fetched"] as TorStatus[] };
+
+/*
+ * What the website is about: software work from the current fiscal year. Every
+ * public read — list, facets, stats, a single TOR — goes through this, so a
+ * row outside it is unreachable, not merely unlisted.
+ *
+ * "Current" is the newest fiscal year among the software TORs we hold, not a
+ * clock: data.go.th publishes a year months after it closes, so the calendar
+ * would point at a year with no rows. When discovery starts ingesting the next
+ * year, the site moves to it on its own.
+ */
+const SCOPE_TTL_MS = 5 * 60_000;
+let scopeCache: { fiscalYear: number | null; at: number } | null = null;
+
+async function currentFiscalYear(): Promise<number | null> {
+  if (scopeCache && Date.now() - scopeCache.at < SCOPE_TTL_MS) return scopeCache.fiscalYear;
+
+  const newest = await TorModel.findOne({ isSoftware: true, fiscalYear: { $ne: null } }, { fiscalYear: 1 })
+    .sort({ fiscalYear: -1 })
+    .lean();
+  scopeCache = { fiscalYear: newest?.fiscalYear ?? null, at: Date.now() };
+  return scopeCache.fiscalYear;
+}
+
+async function publicScope(): Promise<QueryFilter<Tor>> {
+  const fiscalYear = await currentFiscalYear();
+  return fiscalYear === null
+    ? { status: LISTED, isSoftware: true }
+    : { status: LISTED, isSoftware: true, fiscalYear };
+}
+
 export async function listTors(input: ListInput) {
-  const filter: QueryFilter<Tor> = {};
+  const filter: QueryFilter<Tor> = await publicScope();
 
   /*
    * What counts as a result.
@@ -36,18 +118,28 @@ export async function listTors(input: ListInput) {
    *
    * `published` stays in the $in for the day an editorial promotion step
    * exists. Nothing writes it today — see TOR_STATUSES in tor.model.ts.
+   *
+   * The status set, plus software-only and the current year, comes from
+   * publicScope() above.
    */
-  filter.status = { $in: ["graded", "published", "documents_fetched"] };
 
   if (input.agency) filter.agency = input.agency;
   if (input.category) filter.category = input.category;
+  if (input.method) filter.methodId = input.method;
   if (input.province) filter["location.province"] = input.province;
-  if (typeof input.isSoftware === "boolean") filter.isSoftware = input.isSoftware;
+  if (input.projectStatus) filter.projectStatus = input.projectStatus;
+  if (input.workType) filter.workTypes = input.workType;
 
   if (input.minBudget !== undefined || input.maxBudget !== undefined) {
     filter.budget = {};
     if (input.minBudget !== undefined) filter.budget.$gte = input.minBudget;
     if (input.maxBudget !== undefined) filter.budget.$lte = input.maxBudget;
+  }
+
+  if (input.publishedFrom !== undefined || input.publishedTo !== undefined) {
+    filter.announcedAt = {};
+    if (input.publishedFrom !== undefined) filter.announcedAt.$gte = input.publishedFrom;
+    if (input.publishedTo !== undefined) filter.announcedAt.$lte = input.publishedTo;
   }
 
   if (input.q) {
@@ -56,10 +148,13 @@ export async function listTors(input: ListInput) {
     filter.projectName = { $regex: safe, $options: "i" };
   }
 
+  if (input.skills?.length) return listScored(filter, input, input.skills);
+
   const skip = (input.page - 1) * input.limit;
+  const sort = SORTS[input.sort === "bestMatch" || !input.sort ? "newest" : input.sort];
 
   const [rows, total] = await Promise.all([
-    TorModel.find(filter).sort({ announcedAt: -1 }).skip(skip).limit(input.limit).lean(),
+    TorModel.find(filter).sort(sort).skip(skip).limit(input.limit).lean(),
     TorModel.countDocuments(filter),
   ]);
 
@@ -72,16 +167,86 @@ export async function listTors(input: ListInput) {
   };
 }
 
+type ScoredRow = TorLean & { fitScore: number | null; matchedSkillCount: number };
+
+/**
+ * The list, scored against the reader's skills.
+ *
+ * Scoring, band filtering and sorting all happen here, BEFORE skip/limit. The
+ * frontend used to score each page after fetching it, which sorted every page
+ * on its own: page 1 could end on a 20 and page 2 open on an 84.
+ *
+ * fitScore = share of the TOR's required skills the reader has, 0–100. A TOR
+ * with no tagged skills scores null — "we can't tell", not "no fit".
+ */
+async function listScored(filter: QueryFilter<Tor>, input: ListInput, skills: string[]) {
+  const skip = (input.page - 1) * input.limit;
+
+  const slugs = { $ifNull: ["$requiredSkills.slug", []] };
+  const bands = input.fit?.length
+    ? [{ $match: { $or: input.fit.map((band) => ({ fitScore: FIT_RANGES[band] })) } }]
+    : [];
+
+  const [result] = await TorModel.aggregate<{ items: ScoredRow[]; total: { n: number }[] }>([
+    { $match: filter },
+    {
+      $addFields: {
+        matchedSkillCount: { $size: { $setIntersection: [slugs, skills] } },
+        requiredSkillCount: { $size: slugs },
+      },
+    },
+    {
+      $addFields: {
+        fitScore: {
+          $cond: [
+            { $gt: ["$requiredSkillCount", 0] },
+            // Half-up, like the frontend's Math.round in src/lib/torFit.ts —
+            // $round is half-to-even, and the detail dial must match the card.
+            {
+              $floor: {
+                $add: [{ $multiply: [{ $divide: ["$matchedSkillCount", "$requiredSkillCount"] }, 100] }, 0.5],
+              },
+            },
+            null,
+          ],
+        },
+      },
+    },
+    { $unset: "requiredSkillCount" },
+    ...bands,
+    {
+      $facet: {
+        items: [{ $sort: SORTS[input.sort ?? "newest"] }, { $skip: skip }, { $limit: input.limit }],
+        total: [{ $count: "n" }],
+      },
+    },
+  ]).allowDiskUse(true);
+
+  const total = result?.total[0]?.n ?? 0;
+
+  return {
+    items: (result?.items ?? []).map((r) => ({
+      ...serialize(r),
+      fitScore: r.fitScore,
+      matchedSkillCount: r.matchedSkillCount,
+    })),
+    page: input.page,
+    limit: input.limit,
+    total,
+    pages: Math.ceil(total / input.limit),
+  };
+}
+
 export async function getTor(id: string) {
   if (!isValidObjectId(id)) return null;
-  const tor = await TorModel.findById(id).lean();
+  const tor = await TorModel.findOne({ _id: id, ...(await publicScope()) }).lean();
   return tor ? serialize(tor as TorLean) : null;
 }
 
 export async function getTorDetail(id: string) {
   if (!isValidObjectId(id)) return null;
 
-  const tor = await TorModel.findById(id).lean();
+  const tor = await TorModel.findOne({ _id: id, ...(await publicScope()) }).lean();
   if (!tor) return null;
 
   const [documents, torText] = await Promise.all([
@@ -92,6 +257,30 @@ export async function getTorDetail(id: string) {
   return serializeDetail(tor as TorLean, documents, torText);
 }
 
+/**
+ * An expanded PDF from a TOR's bundle, ready to stream. Null for anything a
+ * guest should not be able to reach: a document belonging to another TOR, a
+ * row that is not an `extractedPdf`, or a path that has left the extract
+ * directory or no longer exists on disk.
+ */
+export async function getDocumentFile(torId: string, documentId: string) {
+  if (!isValidObjectId(torId) || !isValidObjectId(documentId)) return null;
+
+  const document = await DocumentModel.findOne({
+    _id: documentId,
+    torId,
+    kind: "extractedPdf",
+  }).lean();
+  if (!document?.localPath) return null;
+
+  const root = resolve(env.extractDir) + sep;
+  const path = resolve(document.localPath);
+  if (!path.startsWith(root)) return null;
+  if (!(await Bun.file(path).exists())) return null;
+
+  return { path, filename: document.filename ?? "document.pdf" };
+}
+
 /** The full grade. Kept off the public shape deliberately — mount behind auth. */
 export async function getTorGrade(id: string) {
   if (!isValidObjectId(id)) return null;
@@ -100,32 +289,63 @@ export async function getTorGrade(id: string) {
 }
 
 export async function listAgencies() {
+  const scope = await publicScope();
   const rows = await TorModel.aggregate<{ _id: string; count: number }>([
-    { $match: { agency: { $ne: null } } },
+    { $match: { ...scope, agency: { $nin: [null, ""] } } },
     { $group: { _id: "$agency", count: { $sum: 1 } } },
     { $sort: { count: -1 } },
-    { $limit: 200 },
   ]);
   return rows.map((r) => ({ agency: r._id, count: r.count }));
 }
 
 export async function getStats() {
-  const [total, software, byCategory, withSignals] = await Promise.all([
-    TorModel.countDocuments(),
-    TorModel.countDocuments({ isSoftware: true }),
+  const scope = await publicScope();
+  const facet = (field: string) =>
     TorModel.aggregate<{ _id: string | null; n: number }>([
-      { $group: { _id: "$category", n: { $sum: 1 } } },
+      { $match: scope },
+      { $group: { _id: `$${field}`, n: { $sum: 1 } } },
+      { $sort: { n: -1 } },
+    ]);
+
+  const [total, byCategory, byWorkType, byMethod, byProjectStatus, withSignals, top] = await Promise.all([
+    TorModel.countDocuments(scope),
+    facet("category"),
+    // Multi-label, so a TOR counts once under each of its work types — the
+    // counts are what choosing each option returns, and can sum past `total`.
+    TorModel.aggregate<{ _id: string; n: number }>([
+      { $match: scope },
+      { $unwind: "$workTypes" },
+      { $group: { _id: "$workTypes", n: { $sum: 1 } } },
       { $sort: { n: -1 } },
     ]),
-    TorModel.countDocuments({ signalCount: { $gt: 0 } }),
+    facet("methodId"),
+    facet("projectStatus"),
+    TorModel.countDocuments({ ...scope, signalCount: { $gt: 0 } }),
+    TorModel.findOne({ ...scope, budget: { $ne: null } }, { budget: 1 })
+      .sort({ budget: -1 })
+      .lean(),
   ]);
 
   return {
     total,
-    software,
+    // Every listed TOR is software now (publicScope). Kept so existing
+    // callers of the field don't break.
+    software: total,
+    fiscalYear: await currentFiscalYear(),
     // A count of documents carrying observations. Not a count of "suspicious"
     // tenders — that framing is the thing FR-19 forbids.
     withSignals,
+    // All over the listed rows only, so they are the filter rail's option
+    // counts as well.
     byCategory: byCategory.map((c) => ({ category: c._id, count: c.n })),
+    byMethod: byMethod.map((m) => ({ method: m._id, count: m.n })),
+    byWorkType: byWorkType.map((w) => ({ workType: w._id, count: w.n })),
+    // สถานะโครงการ as the portal writes it — the dropdown's options come from
+    // the data, never from a hardcoded list.
+    byProjectStatus: byProjectStatus
+      .filter((p) => p._id)
+      .map((p) => ({ status: p._id as string, count: p.n })),
+    // The budget slider's right edge.
+    maxBudget: top?.budget ?? null,
   };
 }

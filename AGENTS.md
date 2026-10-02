@@ -182,6 +182,45 @@ no server-side filtering and mangles Thai query params.
   Either derive it from the announcement publish date, extract it from the PDF, or take
   the requirement back to the SRS. Do not invent a deadline field.
 
+### Source B′ — govspending bulk export (the default discovery feed, 2026-09-30)
+
+CKAN's e-GP package trails by roughly a year: FY2568 was published in 2026-05, and on
+2026-09-30 there was no FY2569. The current year comes from **govspending.data.go.th**
+(ภาษีไปไหน, run by DGA). It uses the same opend.data.go.th key and covers FY2558–2569,
+refreshed about monthly.
+
+```
+GET https://api-govspending.data.go.th/api/get/api/years?type=EGP        → [2569, 2568, …]
+GET …/api/get/api/bulkfile?type=EGP&code=egp-contract&year=NNNN&user_key=KEY
+                                  → URL of …/export/bulkfile/egp/NNNN-egp-contract.zip
+GET …/api/service/egp-contract?api-key=KEY&year=NNNN&offset&limit     (paged REST, same rows)
+```
+
+- FY2569's zip is 843 MB (`Last-Modified` 2026-09-08, byte ranges supported). It holds
+  `2569-egp-contract-1..9.csv` (~4.7 GB, 4,425,908 rows) plus `2569-egp-contract-submit.zip`
+  (bidders, not read).
+- **The CSVs are clean:** 28 columns, and every row has 28 values. There are no phantom
+  columns and no shift. The headers are longer names for the same facts
+  (`lib/sources/govspending/columns.ts` maps them onto the CKAN `COL` names, so one
+  normalizer serves both feeds). The method pair is labelled correctly here and backwards
+  in CKAN, so the alias crosses them over.
+- `lib/sources/govspending/` downloads the file once per published version (resumable
+  with `Range`), lists the CSVs from the last 1 MB, and inflates and parses each one as a
+  stream. The resume cursor is `{entry, row}` in `watermarks`. After a full scan the zip is
+  deleted, and the next run compares a HEAD request with `bulkCompletedVersion` and skips
+  if nothing changed. `EGP_FEED=ckan` switches back to CKAN.
+- On each rescan, rows for projects already held **refresh** their portal fields, which
+  is how `สถานะโครงการ` moves to `สิ้นสุดสัญญา`.
+- **Why not the e-GP site's own search:** process5's announcement search
+  (`egp-oann10-service/pb/a-egp-allt-project/announcement`) is gated by Cloudflare
+  Turnstile. A plain request gets `{"validateCfTurnTile":false}`. **Do not work around
+  it.** The per-project document chain below is not gated and is unchanged.
+
+**Storage policy.** Bundles and their PDFs are deleted once extraction reaches a final
+outcome (`extract.service.ts discardFiles`). Grading, skills and summaries read only
+`tor_chunks`. The `documents` rows remain, and their `url` is the e-GP bundle link.
+Keeping the files cost about 67 MB per project. `KEEP_DOCUMENT_FILES=true` keeps them.
+
 ### Source B — CKAN → national e-GP
 
 A two-hop chain, verified live. The join key is the whole trick: CKAN's `รหัสโครงการ`
@@ -199,11 +238,25 @@ process5.gprocurement.go.th/egp-upload-service/v1/downloadFileTest?fileId=<zipId
 Verified resource `e4eaa1b4-eb1a-4534-b227-988ee25b898d`, 511,606 rows. Page size 32,000;
 larger values are silently clamped.
 
+**Scope: one fiscal year, software only (2026-09-30).** data.go.th publishes one package
+per Buddhist-era fiscal year, titled `ข้อมูลโครงการจัดซื้อจัดจ้างจากระบบการจัดซื้อจัดจ้างภาครัฐ
+ปีงบประมาณ NNNN`. The slugs are inconsistent (`cgd-contract-2558`, `cdg-contract-2567`,
+`egp-contact-2568`), so match on the title. Each package is split into ~10 datastore
+resources. FY2568's package is `3beb7813-…`, with `2568-egp-contract-1..10` (the resource
+above is #1), and it was published 2026-05, about seven months after that year closed. On
+2026-09-30 there was **no FY2569 package**. So "this year" means the newest *published* year.
+`lib/sources/ckan/catalog.ts` resolves it on every run (`CKAN_FISCAL_YEAR` pins it), and
+discovery pages every resource with a server-side `filters={"ปีงบประมาณ":"NNNN"}`. Rows
+that are not software (`modules/ingest/scope.ts`) are dropped *before* they are enqueued.
+The website shows only software TORs from the newest year held (`tor.service.ts publicScope`).
+
 **Its defects, each of which has bitten and must be designed around:**
 
-- **No `datastore_search_sql`, and non-ASCII query params are mangled** (`q=ซอฟต์แวร์`
-  arrives as `?????`). Together: *all* Thai filtering happens client-side, after a bulk
-  pull. There is no such thing as a server-side search on this source.
+- **No `datastore_search_sql`, and free-text `q=ซอฟต์แวร์` is mangled** (arrives as
+  `?????`), so Thai *search* happens client-side after a bulk pull. Exact-match
+  `filters` (JSON) do work, Thai column names included: `{"ปีงบประมาณ":"2568"}` returns
+  511,606 on resource #1 and `"2569"` returns 0. `total` and `offset` then count only the
+  filtered rows.
 - **Rows are shifted against their header — real, confirmed on this resource.** The API
   declares 32 columns; each row carries 29 values. The three `(Eng)` columns are declared
   and never populated, so the gateway zips 29 values against 32 keys and every column after
@@ -219,6 +272,16 @@ larger values are silently clamped.
   including `จังหวัด` (index 15) are unaffected. Detect the shift, re-zip values against
   the header with the phantom columns removed, and leave unshifted rows untouched — a
   resource without the defect must not be corrupted by "fixing" it.
+
+  **The spelling varies by resource.** Resource #10 (`35961821-…`) declares the phantoms
+  with a space, as `จังหวัด (Eng)`. An exact-name match missed them, so those rows went
+  through unrealigned, with the status under `เขต/อำเภอ (Eng)`. Header names are now
+  compared with whitespace stripped (`columns.ts isPhantomColumn`).
+- **`สถานะโครงการ` is a contract-stage status**, not the e-GP website's procurement stage.
+  After realignment the observed values are `ระหว่างดำเนินการ` and `สิ้นสุดสัญญา`. The
+  stage list on the e-GP site (จัดทำ TOR, รายงานขอซื้อขอจ้าง, หนังสือเชิญชวน, …) is not
+  in this dataset, because every row here already has a contract. The website's status
+  filter offers whatever values the stored rows carry (`getStats().byProjectStatus`).
 - **The bundle download has no `content-length` header.** Verified bundles run from ~1MB
   to 512,452,129 bytes. There is nothing to pre-check, so the size cap must be enforced by
   counting bytes as they stream, and the write must stream to disk — `await

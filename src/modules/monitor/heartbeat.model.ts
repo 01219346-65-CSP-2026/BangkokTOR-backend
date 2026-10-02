@@ -38,6 +38,11 @@ const heartbeatSchema = new Schema(
 
     processedThisRun: { type: Number, default: 0 },
     failedThisRun: { type: Number, default: 0 },
+
+    // Set by the dashboard's Stop button. The worker reads it on its beat timer
+    // and stops after its current row. A new process gets a new row, so the
+    // flag can never outlive the run it was aimed at.
+    stopRequestedAt: { type: Date, default: null },
   },
   { versionKey: false, collection: "worker_heartbeats", _id: false },
 );

@@ -51,13 +51,46 @@ export async function beat(input: BeatInput): Promise<void> {
 }
 
 /**
+ * Has the dashboard asked this worker to stop? Never throws: a failed read is
+ * "no", because a worker that cannot reach Mongo has bigger problems than a
+ * missed stop request.
+ */
+export async function stopRequested(id: string): Promise<boolean> {
+  try {
+    const row = await HeartbeatModel.findById(id).select("stopRequestedAt").lean();
+    return Boolean(row?.stopRequestedAt);
+  } catch (error) {
+    console.error("stop-flag read failed (continuing):", error);
+    return false;
+  }
+}
+
+/**
  * Beat on an interval so an idle worker still proves it is alive. Returns the
  * stop function; the caller owns the timer's lifetime.
  *
+ * `onStopRequested` rides the same timer, so a remote stop costs one indexed
+ * read per beat rather than one per row. It fires at most once.
+ *
  * `unref` so a pending beat cannot hold the process open at shutdown.
  */
-export function startBeating(read: () => BeatInput, everyMs: number): () => void {
-  const timer = setInterval(() => void beat(read()), everyMs);
+export function startBeating(
+  read: () => BeatInput,
+  everyMs: number,
+  onStopRequested?: () => void,
+): () => void {
+  let stopFired = false;
+  const timer = setInterval(() => {
+    const input = read();
+    void beat(input);
+    if (!onStopRequested || stopFired) return;
+    void stopRequested(input.id).then((yes) => {
+      if (yes && !stopFired) {
+        stopFired = true;
+        onStopRequested();
+      }
+    });
+  }, everyMs);
   timer.unref?.();
   return () => clearInterval(timer);
 }

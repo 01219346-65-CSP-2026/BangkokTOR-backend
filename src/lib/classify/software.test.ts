@@ -137,6 +137,7 @@ describe("the verdict reports its own uncertainty", () => {
     expect(r.contractType).toBe("hire");
     expect(r.methodId).toBe("eBidding");
     expect(r.statusId).toBe("inProgress");
-    expect(r.classifierVersion).toBe(1);
+    expect(r.workTypes).toEqual(["development"]);
+    expect(r.classifierVersion).toBe(2);
   });
 });

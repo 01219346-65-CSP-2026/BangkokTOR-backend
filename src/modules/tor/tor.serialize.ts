@@ -3,6 +3,7 @@ import { ruleByCode } from "../../lib/grade/rules.ts";
 import type { IngestDocumentLean } from "../ingest/document.model.ts";
 import type { TorLean } from "./tor.model.ts";
 import type { TorTextLean } from "../extract/torText.model.ts";
+import { egpListingUrl, isLegacyEgpUrl, SOURCE_ID as CKAN_SOURCE_ID } from "../../lib/sources/ckan/normalize.ts";
 
 // THE FR-19 GATE.
 //
@@ -60,22 +61,32 @@ function toSignal(code: string): PublicSignal | null {
   };
 }
 
+/** A skill the TOR asks for, with the quote it was found in. */
+export type PublicRequiredSkill = { slug: string; evidence: string };
+
 export type PublicTor = Omit<
   TorLean,
-  (typeof PRIVATE_GRADE_FIELDS)[number] | "_id" | "__v"
+  (typeof PRIVATE_GRADE_FIELDS)[number] | "_id" | "__v" | "requiredSkills" | "skillTaggerVersion"
 > & {
   id: string;
   signalCount: number;
   signals: PublicSignal[];
+  requiredSkills: PublicRequiredSkill[];
+  /** Only on a list request that sent the reader's skills — see listScored. */
+  fitScore?: number | null;
+  matchedSkillCount?: number;
 };
 
 export type PublicTorDocument = {
   id: string;
-  kind: "announcement" | "tor" | "bundle";
+  kind: "announcement" | "tor" | "bundle" | "extractedPdf";
   filename: string | null;
+  /** The source portal's link, except for `extractedPdf`, which is served by
+   *  this API at GET /api/tors/:id/documents/:documentId/file. */
   url: string;
   textLayer: "digital" | "scanned" | "unreadable" | "missing";
   pages: number;
+  bytes: number | null;
   fetchedAt: string | null;
 };
 
@@ -104,6 +115,19 @@ export type PublicTorDetail = PublicTor & {
   summaryPoints: PublicTorSummaryPoint[];
 };
 
+/**
+ * The "open the original" link. e-GP rows ingested before the portal moved
+ * still store the retired process3 URL, so rebuild it from the project number
+ * on read — cheaper and safer than a migration, and it keeps working if the
+ * portal moves again (change egpListingUrl, nothing else).
+ */
+export function publicSourceUrl(tor: Pick<TorLean, "sourceId" | "projectId" | "sourceUrl">): string {
+  if (tor.sourceId === CKAN_SOURCE_ID && tor.projectId && isLegacyEgpUrl(tor.sourceUrl)) {
+    return egpListingUrl(tor.projectId);
+  }
+  return tor.sourceUrl ?? "";
+}
+
 /** Guest/public shape. Strips the grade entirely and emits neutral signals. */
 export function serialize(tor: TorLean): PublicTor {
   const {
@@ -118,14 +142,18 @@ export function serialize(tor: TorLean): PublicTor {
     summarizedAt: _summarizedAt,
     summaryVersion: _sv,
     summaryModel: _sm,
+    requiredSkills,
+    skillTaggerVersion: _stv,
     ...rest
   } = tor as TorLean & Record<string, unknown>;
 
   const fired = (ruleFindings ?? []).filter((f) => f.fired);
 
   return {
-    ...(rest as Omit<TorLean, (typeof PRIVATE_GRADE_FIELDS)[number] | "_id">),
+    ...(rest as Omit<PublicTor, "id" | "signalCount" | "signals" | "requiredSkills">),
     id: String(_id),
+    sourceUrl: publicSourceUrl(tor),
+    requiredSkills: (requiredSkills ?? []).map((s) => ({ slug: s.slug, evidence: s.evidence ?? "" })),
     signalCount: fired.length,
     signals: fired
       .map((f) => toSignal(f.code ?? ""))
@@ -159,9 +187,16 @@ export function serializeDetail(
       id: String(document._id),
       kind: document.kind,
       filename: document.filename ?? null,
-      url: document.url,
+      // Our own file route only while the PDF is still on disk. Extraction
+      // normally deletes it (extract.service.ts discardFiles), and then the
+      // row's url is the e-GP bundle it came from.
+      url:
+        document.kind === "extractedPdf" && document.localPath
+          ? `/api/tors/${String(tor._id)}/documents/${String(document._id)}/file`
+          : document.url,
       textLayer: document.textLayer ?? "missing",
-      pages: pagesByDocument.get(String(document._id)) ?? 0,
+      pages: document.pages ?? pagesByDocument.get(String(document._id)) ?? 0,
+      bytes: document.bytes ?? null,
       fetchedAt: document.fetchedAt?.toISOString() ?? null,
     })),
     // sanitizeBullets again here, at the last boundary before a reader.

@@ -24,9 +24,25 @@ export const env = {
   // Ingestion. Not required at boot — the API serves what is already stored
   // whether or not ingestion can run.
   datagothKey: process.env.DATAGOTH_KEY ?? "",
-  ckanResourceId:
-    process.env.CKAN_RESOURCE_ID ?? "e4eaa1b4-eb1a-4534-b227-988ee25b898d",
+  // Where discovery reads e-GP projects from. "govspending" (default) is DGA's
+  // bulk export, which carries the current fiscal year; "ckan" is data.go.th's
+  // datastore, which lags a year behind. See AGENTS.md §3.
+  egpFeed: (process.env.EGP_FEED === "ckan" ? "ckan" : "govspending") as "ckan" | "govspending",
+  // Unset = the newest fiscal year the feed has published, resolved per run.
+  // Set a Buddhist-era year (e.g. 2569) to pin it. CKAN_FISCAL_YEAR is the old name.
+  egpFiscalYear: (() => {
+    const raw = process.env.EGP_FISCAL_YEAR || process.env.CKAN_FISCAL_YEAR;
+    return raw ? Number(raw) : undefined;
+  })(),
+  // The govspending bulk zip (~850 MB) is downloaded here, and deleted once a
+  // scan of it completes.
+  sourceDir: process.env.SOURCE_DIR ?? "./data/source",
   blobDir: process.env.BLOB_DIR ?? "./data/blobs",
+  // Bundles and their PDFs are deleted once extraction has read them — only
+  // the text (tor_chunks) is used downstream, and keeping the files costs
+  // ~67 MB per project. The site links to the e-GP zip instead. Set true to
+  // keep them for debugging.
+  keepDocumentFiles: process.env.KEEP_DOCUMENT_FILES === "true",
   extractDir: process.env.EXTRACT_DIR ?? "./data/extracted",
 
   workerLeaseMs: Number(process.env.WORKER_LEASE_MS ?? 900_000),
@@ -48,6 +64,10 @@ export const env = {
   // read the private grade. Not user auth — see middleware/adminToken.ts.
   // Required in production; optional in dev so a local run needs no setup.
   adminToken: process.env.ADMIN_TOKEN ?? "",
+  // HS256 secret the frontend signs its per-request user token with (see
+  // BangkokTOR-frontend/src/api/client.ts). Must match the frontend's value.
+  // Unset means the /api/me routes answer 401 — they never fall open.
+  internalJwtSecret: process.env.INTERNAL_JWT_SECRET ?? "",
 
   // Per-IP request ceilings. Reads are generous enough that normal browsing
   // never notices; the `/run` endpoints are near-zero because each one costs
@@ -56,6 +76,7 @@ export const env = {
   rateLimitPipelineMax: Number(process.env.RATE_LIMIT_PIPELINE_MAX ?? 60),
   rateLimitWriteMax: Number(process.env.RATE_LIMIT_WRITE_MAX ?? 20),
   rateLimitRunMax: Number(process.env.RATE_LIMIT_RUN_MAX ?? 2),
+  rateLimitProfileMax: Number(process.env.RATE_LIMIT_PROFILE_MAX ?? 60),
 
   // Verified bundles reach 512,452,129 bytes. Anything past this is recorded
   // as oversize rather than filling the disk.
@@ -83,6 +104,11 @@ export function assertServeConfig(): void {
   if (isProduction && !env.adminToken) {
     throw new Error(
       "ADMIN_TOKEN is not set — the /run, write, and grade routes would be unprotected in production. See .env.example.",
+    );
+  }
+  if (isProduction && !env.internalJwtSecret) {
+    throw new Error(
+      "INTERNAL_JWT_SECRET is not set — signed-in users could not reach /api/me. See .env.example.",
     );
   }
 }

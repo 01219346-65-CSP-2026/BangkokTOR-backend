@@ -42,3 +42,6 @@ process.on("SIGTERM", () => void shutdown("SIGTERM"));
 await connectMongo();
 await runner.loop();
 await disconnectMongo();
+// loop() only returns on a dashboard Stop. Exit explicitly so a lingering
+// handle (an HTTP keep-alive, a stray timer) cannot keep a stopped worker alive.
+process.exit(0);

@@ -52,7 +52,12 @@ async function loop() {
   await beat(snapshot());
   // Grading a single TOR takes 1-3 minutes, so without a ticking beat a
   // perfectly healthy worker would look dead for most of every job.
-  const stopBeating = startBeating(snapshot, env.heartbeatMs);
+  // Dashboard Stop: finish the current TOR, then let loop() return.
+  const stopBeating = startBeating(snapshot, env.heartbeatMs, () => {
+    console.log(`\nremote-stop — finishing current TOR, then stopping`);
+    running = false;
+    state = "stopping";
+  });
 
   try {
     while (running) {
@@ -146,3 +151,6 @@ process.on("SIGTERM", () => void shutdown("SIGTERM"));
 await connectMongo();
 await loop();
 await disconnectMongo();
+// loop() only returns on a dashboard Stop. Exit explicitly so a lingering
+// handle (an HTTP keep-alive, a stray timer) cannot keep a stopped worker alive.
+process.exit(0);

@@ -110,8 +110,9 @@ Everything is JSON. Reads are open; writes are not — see Access control.
 | GET/PATCH/DELETE | `/api/notification/:id` | PATCH, DELETE 🔒 |
 | GET/POST | `/api/techstack` | POST 🔒 |
 | GET/PATCH/DELETE | `/api/techstack/:id` | PATCH, DELETE 🔒 |
+| GET/PUT | `/api/me/profile` | 👤 signed-in user's skill profile; GET is 204 until first save |
 
-🔒 = requires `X-Admin-Token`.
+🔒 = requires `X-Admin-Token`. 👤 = requires the frontend-signed user token (`Authorization: Bearer`, `INTERNAL_JWT_SECRET`).
 
 ## Grade privacy (FR-19)
 
@@ -145,6 +146,7 @@ Rate limits are per IP, fixed window, counted in memory:
 | read | 120/min | `/api/tors/*` |
 | pipeline | 60/min | `/api/pipeline/*`, `/api/*/status` |
 | write | 20/min | user, notification, techstack |
+| profile | 60/min **per user** | `/api/me/*` |
 | run | **2/hour** | `POST /api/*/run` |
 
 Health is exempt, so a busy container is never marked unhealthy by its own

@@ -3,6 +3,7 @@ import { healthRouter } from "./health.route.ts";
 import { notificationRouter } from "../modules/notification/notification.route.ts";
 import { techstackRouter } from "../modules/techstack/techstack.route.ts";
 import { userRouter } from "../modules/user/user.route.ts";
+import { meRouter } from "../modules/me/me.route.ts";
 import { ingestRouter } from "../modules/ingest/ingest.route.ts";
 import { extractRouter } from "../modules/extract/extract.route.ts";
 import { gradeRouter } from "../modules/grade/grade.route.ts";
@@ -30,6 +31,9 @@ routes.use(healthRouter);
 routes.use("/api/notification", writeLimit, notificationRouter);
 routes.use("/api/techstack", writeLimit, techstackRouter);
 routes.use("/api/user", writeLimit, userRouter);
+// The signed-in user's own profile. Its limiter is inside the router: it keys
+// by user, which only exists once requireUser has run.
+routes.use("/api/me", meRouter);
 routes.use("/api/ingest", ingestRouter);
 routes.use("/api/extract", extractRouter);
 routes.use("/api/grade", gradeRouter);
