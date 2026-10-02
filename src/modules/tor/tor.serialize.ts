@@ -1,8 +1,8 @@
 import { sanitizeBullets } from "../../lib/ai/summaryGuard.ts";
 import { ruleByCode } from "../../lib/grade/rules.ts";
 import type { IngestDocumentLean } from "../ingest/document.model.ts";
-import type { TorChunkLean } from "../extract/chunk.model.ts";
 import type { TorLean } from "./tor.model.ts";
+import type { TorTextLean } from "../extract/torText.model.ts";
 import { egpListingUrl, isLegacyEgpUrl, SOURCE_ID as CKAN_SOURCE_ID } from "../../lib/sources/ckan/normalize.ts";
 
 // THE FR-19 GATE.
@@ -171,15 +171,15 @@ export function serialize(tor: TorLean): PublicTor {
 export function serializeDetail(
   tor: TorLean,
   documents: IngestDocumentLean[],
-  chunks: TorChunkLean[],
+  torText: TorTextLean | null,
 ): PublicTorDetail {
   const pagesByDocument = new Map<string, number>();
-  for (const chunk of chunks) {
-    const current = pagesByDocument.get(String(chunk.documentId)) ?? 0;
-    pagesByDocument.set(String(chunk.documentId), Math.max(current, chunk.pageEnd));
+  if (torText) {
+    pagesByDocument.set(
+      String(torText.documentId),
+      torText.files.reduce((total, file) => total + file.pages, 0),
+    );
   }
-
-  const chunkByIndex = new Map(chunks.map((chunk) => [chunk.index, chunk]));
 
   return {
     ...serialize(tor),
@@ -212,16 +212,15 @@ export function serializeDetail(
         chunkIndex: bullet.chunkIndex ?? -1,
       })),
     ).map((bullet, position) => {
-      const chunk = chunkByIndex.get(bullet.chunkIndex);
       return {
         // Bullets carry no _id of their own (_id: false on the subdocument),
         // so the id is positional — stable for a given stored summary, which
         // is all a React key needs.
         id: `${String(tor._id)}-s${position}`,
         text: bullet.text,
-        filename: chunk?.filename ?? null,
-        pageStart: chunk?.pageStart ?? 0,
-        pageEnd: chunk?.pageEnd ?? 0,
+        filename: null,
+        pageStart: 0,
+        pageEnd: 0,
       };
     }),
   };

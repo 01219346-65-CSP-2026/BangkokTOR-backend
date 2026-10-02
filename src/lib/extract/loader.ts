@@ -20,6 +20,8 @@ export type LoaderNode = {
   "heading level"?: number;
   "font size"?: number;
   id?: number;
+  "list items"?: LoaderNode[];
+  rows?: { cells?: LoaderNode[] }[];
 };
 
 export type LoaderDocument = {
@@ -42,6 +44,41 @@ export type LoadedPdf = {
 export type LoadOutcome =
   | { ok: true; pdfs: LoadedPdf[] }
   | { ok: false; reason: "loader-failed"; message: string };
+
+
+function normalize(content: unknown): string {
+  if (typeof content !== "string") return "";
+  return content.replace(/\s+/g, " ").trim();
+}
+
+export function getNodeContent(node: LoaderNode): string {
+  if (node.type === "image") return "";
+
+  const node_texts: string[] = [];
+  const content = normalize(node.content);
+  if (content) node_texts.push(content);
+
+  for (const row of node.rows ?? []) {
+    const cells = (row.cells ?? [])
+      .map(getNodeContent)
+      .filter((cell) => cell.length > 0);
+    if (cells.length > 0) node_texts.push(cells.join(" | "));
+  }
+
+  for (const item of node["list items"] ?? []) {
+    const item_text = getNodeContent(item);
+    if (item_text) node_texts.push(item_text);
+  }
+
+  for (const kid of node.kids ?? []) {
+    const kid_text = getNodeContent(kid);
+    if (kid_text) node_texts.push(kid_text);
+  }
+
+  return node_texts.join("\n");
+}
+
+
 
 /**
  * Convert every PDF of one bundle to opendataloader JSON, then read the JSON
