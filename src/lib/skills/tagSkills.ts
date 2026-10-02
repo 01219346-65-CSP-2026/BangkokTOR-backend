@@ -12,7 +12,7 @@ import { SKILL_VOCABULARY } from "../../modules/techstack/techstack.vocabulary.t
 export type SkillSlug = (typeof SKILL_VOCABULARY)[number]["slug"];
 
 /** Bump when aliases or matching change, so stale tags are findable. */
-export const SKILL_TAGGER_VERSION = 2;
+export const SKILL_TAGGER_VERSION = 3;
 
 /**
  * A plain string is matched case-insensitively. When it is ASCII it must also
@@ -61,6 +61,53 @@ export const SKILL_ALIASES: Record<SkillSlug, Alias[]> = {
   // on 74 of 76 extracted TORs — so the bare name says nothing about the work.
   egpApi: [/e-?GP\s*API/i, /เชื่อม(?:ต่อ|โยง)[^\n]{0,60}e-?GP/i],
   pdpa: ["PDPA", "คุ้มครองข้อมูลส่วนบุคคล"],
+
+  // ── Added 2026-09-30 (vocabulary v2). Short acronyms are case-sensitive
+  // regexes: "AI", "HIS", "SAP", "SSO" are also ordinary letters in English.
+  android: ["Android", "Kotlin"],
+  ios: [/(?<![A-Za-z0-9])iOS(?![A-Za-z0-9])/, /(?<![A-Za-z0-9])Swift(?![A-Za-z0-9])/],
+  php: [/(?<![A-Za-z0-9])PHP(?![A-Za-z0-9])/, "Laravel", "CodeIgniter"],
+  uxui: ["UX/UI", "UI/UX", "User Experience", "User Interface", "ออกแบบส่วนติดต่อผู้ใช้"],
+  wcag: ["WCAG", "Web Accessibility", "การเข้าถึงเว็บ"],
+  cms: ["WordPress", "Drupal", "Joomla", /(?<![A-Za-z0-9])CMS(?![A-Za-z0-9])/, "Content Management System"],
+  mysql: ["MySQL", "MariaDB"],
+  oracleDb: ["Oracle Database", /(?<![A-Za-z0-9])Oracle(?![A-Za-z0-9])/],
+  sqlServer: ["SQL Server", "MSSQL", "MS SQL"],
+  microservices: ["Microservice", "Microservices", "API Gateway", "ไมโครเซอร์วิส"],
+  messageQueue: ["Kafka", "RabbitMQ", "Message Queue"],
+  erp: [/(?<![A-Za-z0-9])ERP(?![A-Za-z0-9])/, /(?<![A-Za-z0-9])SAP(?![A-Za-z0-9])/, "Odoo", "ระบบวางแผนทรัพยากรองค์กร"],
+  aiMl: ["Machine Learning", "Deep Learning", "ปัญญาประดิษฐ์", /(?<![A-Za-z0-9])AI(?![A-Za-z0-9])/, "TensorFlow", "PyTorch"],
+  llm: [/(?<![A-Za-z0-9])LLMs?(?![A-Za-z0-9])/, "Generative AI", "Large Language Model", /(?<![A-Za-z0-9])GPT(?![A-Za-z0-9])/, "RAG"],
+  chatbot: ["Chatbot", "Chat Bot", "แชทบอท"],
+  computerVision: ["Computer Vision", /(?<![A-Za-z0-9])OCR(?![A-Za-z0-9])/, "Face Recognition", "Image Recognition", "จดจำใบหน้า"],
+  dataWarehouse: ["Data Warehouse", "Data Lake", "คลังข้อมูล", /(?<![A-Za-z0-9])ETL(?![A-Za-z0-9])/],
+  bigData: ["Big Data", "ข้อมูลขนาดใหญ่", "Hadoop", "Apache Spark"],
+  dashboardBi: ["Dashboard", "แดชบอร์ด", "Business Intelligence", "Tableau", "Looker"],
+  remoteSensing: ["Remote Sensing", "สำรวจระยะไกล", "ภาพถ่ายดาวเทียม", "ข้อมูลดาวเทียม"],
+  govCloud: ["GDCC", "Government Data Center", "คลาวด์กลางภาครัฐ"],
+  publicCloud: [/(?<![A-Za-z0-9])AWS(?![A-Za-z0-9])/, "Amazon Web Services", "Azure", "Google Cloud", /(?<![A-Za-z0-9])GCP(?![A-Za-z0-9])/],
+  virtualization: ["VMware", "vSphere", "Virtualization", "Hyper-V"],
+  linux: ["Linux", "Ubuntu", "Red Hat", "CentOS", "RHEL"],
+  backupDr: ["Disaster Recovery", "DR Site", "Backup", "สำรองข้อมูล"],
+  network: ["Cisco", "Fortinet", "Switch Layer", "Load Balancer", "ระบบเครือข่าย"],
+  monitoring: ["Grafana", "Prometheus", "Zabbix", "Nagios"],
+  iso27001: [/ISO\s*\/?\s*(?:IEC\s*)?27001/i],
+  sso: ["Single Sign-On", "Single Sign On", /(?<![A-Za-z0-9])SSO(?![A-Za-z0-9])/, "OAuth", "OpenID", "Keycloak", /(?<![A-Za-z0-9])MFA(?![A-Za-z0-9])/, "2FA"],
+  ldap: [/(?<![A-Za-z0-9])LDAP(?![A-Za-z0-9])/, "Active Directory"],
+  firewall: ["Firewall", /(?<![A-Za-z0-9])WAF(?![A-Za-z0-9])/, "ไฟร์วอลล์"],
+  pentest: ["Penetration Test", "Penetration Testing", "Pentest", "Vulnerability Assessment", "ทดสอบเจาะระบบ"],
+  soc: [/(?<![A-Za-z0-9])SIEM(?![A-Za-z0-9])/, "Security Operation Center", "Security Operations Center", "ศูนย์ปฏิบัติการเฝ้าระวัง"],
+  sslTls: [/(?<![A-Za-z0-9])SSL(?![A-Za-z0-9])/, /(?<![A-Za-z0-9])TLS(?![A-Za-z0-9])/],
+  gdx: [/(?<![A-Za-z0-9])GDX(?![A-Za-z0-9])/, "Linkage Center", "แลกเปลี่ยนข้อมูล"],
+  dopa: [/(?<![A-Za-z0-9])DOPA(?![A-Za-z0-9])/, "Smart Card Reader", "ทะเบียนราษฎร"],
+  digitalSignature: ["Digital Signature", "e-Signature", "ลายมือชื่ออิเล็กทรอนิกส์", /(?<![A-Za-z0-9])PKI(?![A-Za-z0-9])/],
+  lineApi: [/(?<![A-Za-z0-9])LINE\s*(?:OA|Official|API|Notify|LIFF|Messaging)(?![A-Za-z0-9])/],
+  ePayment: ["PromptPay", "พร้อมเพย์", "Payment Gateway", "e-Payment"],
+  openData: ["Open Data", "ข้อมูลเปิด", /(?<![A-Za-z0-9])CKAN(?![A-Za-z0-9])/],
+  his: [/(?<![A-Za-z0-9])HIS(?![A-Za-z0-9])/, /(?<![A-Za-z0-9])HL7(?![A-Za-z0-9])/, "FHIR", "ระบบสารสนเทศโรงพยาบาล"],
+  lms: [/(?<![A-Za-z0-9])LMS(?![A-Za-z0-9])/, "Moodle", "e-Learning", "E-Learning"],
+  iot: [/(?<![A-Za-z0-9])IoT(?![A-Za-z0-9])/, "MQTT", "Internet of Things"],
+  itil: [/(?<![A-Za-z0-9])ITIL(?![A-Za-z0-9])/, "Service Desk", "Help Desk"],
 };
 
 function escapeRegex(value: string): string {

@@ -82,3 +82,24 @@ describe("tagSkills", () => {
     expect(tags[0]?.chunkIndex).toBeNull();
   });
 });
+
+describe("tagSkills — vocabulary v2 (2026-09-30)", () => {
+  test("capabilities Thai TORs actually ask for", () => {
+    expect(slugs("ระบบต้องได้รับการรับรองมาตรฐาน ISO/IEC 27001 และรองรับ Single Sign-On")).toEqual(["iso27001", "sso"]);
+    expect(slugs("เชื่อมโยงข้อมูลผ่าน GDX และตรวจสอบกับฐานทะเบียนราษฎร")).toEqual(["dopa", "gdx"]);
+    expect(slugs("ติดตั้งบน GDCC พร้อมระบบ Disaster Recovery")).toEqual(["backupDr", "govCloud"]);
+    expect(slugs("พัฒนา Chatbot ด้วย LLM และ Dashboard สำหรับผู้บริหาร")).toEqual(["chatbot", "dashboardBi", "llm"]);
+  });
+
+  test("short acronyms are case-sensitive tokens", () => {
+    // "his" the English word, "sap" in a word, "ai" inside "detail".
+    expect(slugs("his detail sapling said")).toEqual([]);
+    expect(slugs("เชื่อมต่อระบบ HIS ของโรงพยาบาล ด้วย HL7")).toEqual(["his"]);
+    expect(slugs("ใช้ AI วิเคราะห์ภาพ")).toEqual(["aiMl"]);
+  });
+
+  test("LINE means the messaging platform, never ออนไลน์", () => {
+    expect(slugs("ให้บริการออนไลน์ผ่านเว็บไซต์")).toEqual([]);
+    expect(slugs("แจ้งเตือนผ่าน LINE OA และ LINE Notify")).toEqual(["lineApi"]);
+  });
+});

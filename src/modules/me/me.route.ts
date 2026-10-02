@@ -14,3 +14,8 @@ meRouter.use(requireUser, profileLimit);
 
 meRouter.get("/profile", controller.getProfile);
 meRouter.put("/profile", controller.putProfile);
+
+meRouter.get("/bookmarks", controller.listBookmarks);
+meRouter.get("/bookmarks/:torId", controller.getBookmark);
+meRouter.put("/bookmarks/:torId", controller.putBookmark);
+meRouter.delete("/bookmarks/:torId", controller.deleteBookmark);

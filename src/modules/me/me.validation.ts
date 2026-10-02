@@ -1,4 +1,5 @@
 import { HttpError } from "../../middleware/errors.ts";
+import { SKILL_VOCABULARY } from "../techstack/techstack.vocabulary.ts";
 import {
   asObject,
   readBoolean,
@@ -36,7 +37,8 @@ export type ProfilePutBody = {
   };
 };
 
-const MAX_SKILLS = 50;
+// The whole vocabulary — a profile can claim every skill, never more.
+const MAX_SKILLS = SKILL_VOCABULARY.length;
 
 function readEnum<T extends string>(
   src: Record<string, unknown>,
