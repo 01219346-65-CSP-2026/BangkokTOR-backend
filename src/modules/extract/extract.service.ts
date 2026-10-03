@@ -2,7 +2,6 @@ import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { Types } from "mongoose";
 import { env } from "../../config/env.ts";
-import { chunkDocuments } from "../../lib/extract/chunk.ts";
 import { loadBundle } from "../../lib/extract/loader.ts";
 import { triageBundle } from "../../lib/extract/triage.ts";
 import { unzipBundle } from "../../lib/extract/unzip.ts";
@@ -10,8 +9,9 @@ import { SOURCE_ID } from "../../lib/sources/ckan/index.ts";
 import { DocumentModel } from "../ingest/document.model.ts";
 import { recordError } from "../ingest/ingest.service.ts";
 import { TorModel } from "../tor/tor.model.ts";
-import { ChunkModel } from "./chunk.model.ts";
 import { ExtractionQueueModel } from "./extraction.model.ts";
+import { buildFullText } from "../../lib/extract/fulltext.ts";
+import { TorTextModel } from "./torText.model.ts";
 
 // Stage ④–⑤: bundle on disk -> PDFs -> text -> chunks a grader can read.
 
@@ -129,7 +129,7 @@ export async function processBundle(
           pdfCount: triaged.all.length,
           digitalCount: 0,
           scannedCount: triaged.scanned,
-          chunkCount: 0,
+          textChars: 0,
           extractedDir: dir,
         },
       },
@@ -139,25 +139,25 @@ export async function processBundle(
     return { ok: true, note: "scanned-only" };
   }
 
-  const chunks = chunkDocuments(triaged.readable);
+  const tor_text = buildFullText(triaged.readable);
 
-  await ChunkModel.deleteMany({ documentId: row.documentId });
-  if (chunks.length > 0) {
-    await ChunkModel.insertMany(
-      chunks.map((c) => ({
+  if (tor_text.chars === 0) {
+    return { ok: true, note: "no-text"};
+  }
+  await TorTextModel.updateOne(
+    { torId: row.torId},
+    { $set: {
         torId: row.torId,
         projectId: row.projectId,
         documentId: row.documentId,
-        filename: c.filename,
-        index: c.index,
-        headingPath: c.headingPath,
-        text: c.text,
-        chars: c.chars,
-        pageStart: c.pageStart,
-        pageEnd: c.pageEnd,
-      })),
-    );
-  }
+        fullText: tor_text.text,
+        chars: tor_text.chars,
+        truncated: tor_text.truncated,
+        files: tor_text.files
+    }},
+    { upsert: true }
+  )
+
 
   await ExtractionQueueModel.updateOne(
     { _id: row._id },
@@ -166,7 +166,7 @@ export async function processBundle(
         pdfCount: triaged.all.length,
         digitalCount: triaged.digital,
         scannedCount: triaged.scanned,
-        chunkCount: chunks.length,
+        textChars: tor_text.chars,
         extractedDir: dir,
       },
     },
@@ -199,11 +199,11 @@ async function markIncomplete(row: ExtractRow, reason: string) {
 }
 
 export async function getExtractStatus() {
-  const [counts, chunks, tors, recent] = await Promise.all([
+  const [counts, tor_texts, tors, recent] = await Promise.all([
     ExtractionQueueModel.aggregate<{ _id: string; n: number }>([
       { $group: { _id: "$status", n: { $sum: 1 } } },
     ]),
-    ChunkModel.countDocuments(),
+    TorTextModel.countDocuments(),
     TorModel.countDocuments({ status: "extraction_pending" }),
     ExtractionQueueModel.find({ status: { $in: ["done", "failed"] } })
       .sort({ updatedAt: -1 })
@@ -227,7 +227,7 @@ export async function getExtractStatus() {
 
   return {
     queue,
-    chunks,
+    tor_texts,
     torsAwaitingGrade: tors,
     // The number that decides whether Thai OCR is worth buying.
     pdfSplit: {
@@ -244,7 +244,7 @@ export async function getExtractStatus() {
       pdfCount: r.pdfCount,
       digitalCount: r.digitalCount,
       scannedCount: r.scannedCount,
-      chunkCount: r.chunkCount,
+      textChars: r.textChars,
       reason: r.reason,
     })),
   };

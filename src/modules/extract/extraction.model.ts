@@ -26,7 +26,7 @@ const extractionQueueSchema = new Schema(
     pdfCount: { type: Number, default: null },
     digitalCount: { type: Number, default: null },
     scannedCount: { type: Number, default: null },
-    chunkCount: { type: Number, default: null },
+    textChars: { type: Number, default: null },
     extractedDir: { type: String, default: null },
   },
   { timestamps: true, versionKey: false, collection: "extraction_queue" },
