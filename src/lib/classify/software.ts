@@ -60,6 +60,13 @@ const STRONG_POSITIVE: Array<[string, number]> = [
   // A real cybersecurity-maintenance tender (69109034301) scored 33 without
   // it. Hardware buys that mention ไซเบอร์ still carry ครุภัณฑ์/ซื้อ penalties.
   ["ไซเบอร์", 30],
+  // Software *work* on a program, not a program bundled with hardware ("กล้อง
+  // จุลทรรศน์…พร้อมโปรแกรม"), which is why bare โปรแกรม is not a term. Each
+  // missed a real maintenance tender from an e-GP capture (2026-10-04):
+  // POLIS 69089686829, AFIS 69089650774, 69079604624, GIS 69099273704.
+  ["บำรุงรักษาโปรแกรม", 40],
+  ["ปรับปรุงโปรแกรม", 40],
+  ["สารสนเทศภูมิศาสตร์", 35],
 ];
 
 const WEAK_POSITIVE: Array<[string, number]> = [

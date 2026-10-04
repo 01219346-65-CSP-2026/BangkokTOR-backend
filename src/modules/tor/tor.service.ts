@@ -174,7 +174,12 @@ export async function listTors(input: ListInput) {
   if (input.q) {
     // Escaped: a user-supplied "(" must not become a regex the database chokes on.
     const safe = input.q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    filter.projectName = { $regex: safe, $options: "i" };
+    const match = { $regex: safe, $options: "i" };
+    // The search box promises "title, agency, or project number" — the e-GP
+    // project id (e.g. 69079571189) and BMA's own id both count as the number.
+    and.push({
+      $or: [{ projectName: match }, { agency: match }, { projectId: match }, { bmaProjectId: match }],
+    } as QueryFilter<Tor>);
   }
 
   if (and.length) filter.$and = and;

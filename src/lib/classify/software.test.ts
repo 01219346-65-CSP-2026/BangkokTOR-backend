@@ -173,4 +173,21 @@ describe("terms added from real misses", () => {
     });
     expect(r.isSoftware).toBe(true);
   });
+
+  test("program maintenance is software; hardware 'with a program' is not", () => {
+    const hire = "จ้างทำของ/จ้างเหมาบริการ";
+    for (const projectName of [
+      "ประกวดราคาจ้างบำรุงรักษาโปรแกรมและระบบคอมพิวเตอร์ระบบ POLIS ปีงบประมาณ 2570",
+      "ประกวดราคาจ้างงานจ้างเหมาบริการบำรุงรักษาระบบตรวจสอบรายได้และปรับปรุงโปรแกรม",
+      "ประกวดราคาจ้างเหมาบำรุงรักษาโปรแกรมบริหารจัดการข้อมูลสารสนเทศภูมิศาสตร์",
+    ]) {
+      expect(classifyTor({ projectName, procurementType: hire }).isSoftware).toBe(true);
+    }
+    expect(
+      classifyTor({
+        projectName: "ประกวดราคาซื้อกล้องจุลทรรศน์ชนิดสเตอริโอ 3 กระบอกตา ชุดถ่ายภาพพร้อมโปรแกรมประมวลผลภาพ",
+        procurementType: "ซื้อ",
+      }).isSoftware,
+    ).toBe(false);
+  });
 });
