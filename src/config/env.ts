@@ -20,6 +20,9 @@ export const env = {
   httpDelayMs: Number(process.env.HTTP_DELAY_MS ?? 400),
   httpTimeoutMs: Number(process.env.HTTP_TIMEOUT_MS ?? 30_000),
   httpMaxAttempts: Number(process.env.HTTP_MAX_ATTEMPTS ?? 4),
+  // Minimum gap between requests to process5.gprocurement.go.th. e-GP returned
+  // 429 "Rate limit exceeded" at the 400 ms default (2026-10-03).
+  egpDelayMs: Number(process.env.EGP_DELAY_MS ?? 1_500),
 
   // Ingestion. Not required at boot — the API serves what is already stored
   // whether or not ingestion can run.

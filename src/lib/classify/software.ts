@@ -51,6 +51,15 @@ const STRONG_POSITIVE: Array<[string, number]> = [
   ["แพลตฟอร์ม", 35],
   ["คลาวด์", 25],
   ["ปัญญาประดิษฐ์", 35],
+  // Both missed a real e-bidding tender (69099310567, "บำรุงรักษาระบบเครือข่าย
+  // และโปรแกรมประยุกต์ … คลังข้อมูลกลางกรุงเทพมหานคร (BMA Data Warehouse)"),
+  // which scored 38 against the 40 threshold (2026-10-03).
+  ["โปรแกรมประยุกต์", 40],
+  ["คลังข้อมูล", 30],
+  ["data warehouse", 30],
+  // A real cybersecurity-maintenance tender (69109034301) scored 33 without
+  // it. Hardware buys that mention ไซเบอร์ still carry ครุภัณฑ์/ซื้อ penalties.
+  ["ไซเบอร์", 30],
 ];
 
 const WEAK_POSITIVE: Array<[string, number]> = [

@@ -7,7 +7,7 @@ export const RUN_STATUSES = ["running", "finished", "failed"] as const;
 const runSchema = new Schema(
   {
     sourceId: { type: String, required: true },
-    kind: { type: String, enum: ["discover", "fetch"], required: true },
+    kind: { type: String, enum: ["discover", "fetch", "capture"], required: true },
     status: { type: String, enum: RUN_STATUSES, default: "running", required: true },
 
     startedAt: { type: Date, default: Date.now },

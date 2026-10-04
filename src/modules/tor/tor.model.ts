@@ -82,6 +82,10 @@ const torSchema = new Schema(
     // a null deadline means "not published yet" or "could not be read", never
     // a guess (FR-13). See AGENTS.md §3 for where each comes from.
     bmaProjectId: { type: String, default: null },
+    // Keep this TOR's stage and deadline current (refreshBidding). Set for
+    // tenders seen while biddable — BMA rows and e-GP captures — not for the
+    // awarded national history, which has nothing left to move.
+    trackBidding: { type: Boolean, default: false },
     biddingStage: { type: String, enum: [...BIDDING_STAGES, null], default: null },
     // e-GP's own step name, kept so a stage can be audited, not trusted.
     stageFlowName: { type: String, default: null },

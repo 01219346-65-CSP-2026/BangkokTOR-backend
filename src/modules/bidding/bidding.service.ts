@@ -37,6 +37,7 @@ export type BiddingTarget = {
   _id: Types.ObjectId;
   projectId: string;
   bmaProjectId?: string | null;
+  trackBidding?: boolean | null;
   methodId?: string | null;
   bidClosesAt?: Date | null;
   deadlineEvidence?: { documentUrl?: string | null } | null;
@@ -75,7 +76,7 @@ export async function checkBidding(tor: BiddingTarget): Promise<BiddingResult> {
 
   // A direct award (เฉพาะเจาะจง) never publishes an invitation: there is no
   // deadline to read, and looking would only file a "not found" error per TOR.
-  if (tor.bmaProjectId && tor.methodId !== "specific" && stage && HAS_INVITATION.includes(stage)) {
+  if ((tor.bmaProjectId || tor.trackBidding) && tor.methodId !== "specific" && stage && HAS_INVITATION.includes(stage)) {
     const read = await readDeadline(tor);
     note = read.note;
     if (read.set) {
@@ -98,7 +99,11 @@ type DeadlineRead = {
 };
 
 async function readDeadline(tor: BiddingTarget): Promise<DeadlineRead> {
-  const invitation = latestInvitation(await announcements(tor.bmaProjectId!));
+  // Captured from e-GP (not on the BMA portal): the signed bundle is the only
+  // source of the invitation.
+  if (!tor.bmaProjectId) return signedOnlyDeadline(tor);
+
+  const invitation = latestInvitation(await announcements(tor.bmaProjectId));
   const url = invitation ? fileUrl(invitation) : null;
 
   // Re-announcements publish a new invitation; the same one is not re-read.
@@ -126,6 +131,19 @@ async function readDeadline(tor: BiddingTarget): Promise<DeadlineRead> {
   return { note: notes.join(", ") };
 }
 
+async function signedOnlyDeadline(tor: BiddingTarget): Promise<DeadlineRead> {
+  const read = await signedBundleDeadline(tor.projectId, tor.bidClosesAt ? tor.deadlineEvidence?.documentUrl : null);
+  if (read.note === "unchanged") return { note: "unchanged" };
+  if (read.deadline) return found(read.deadline, read.url!, null);
+  if (tor.bidClosesAt) return { note: `kept-previous (${read.note})` };
+  // No signed bundle yet is the normal state of a fresh invitation; only a
+  // bundle that exists and still yields no date is worth an error row.
+  if (read.note !== "egp-no-signed-bundle") {
+    await recordError(tor.projectId, "deadline-not-found", `no readable bid date: ${read.note}`, read.url);
+  }
+  return { note: read.note };
+}
+
 function found(deadline: BidDeadline, url: string, publishedAt: Date | null): DeadlineRead {
   return {
     set: {
@@ -136,9 +154,14 @@ function found(deadline: BidDeadline, url: string, publishedAt: Date | null): De
   };
 }
 
-async function signedBundleDeadline(projectId: string): Promise<{ deadline?: BidDeadline; url?: string; note: string }> {
+async function signedBundleDeadline(
+  projectId: string,
+  /** The bundle a deadline was already read from — not downloaded again. */
+  knownUrl: string | null = null,
+): Promise<{ deadline?: BidDeadline; url?: string; note: string }> {
   const [doc] = await listPublishedDocuments(projectId);
   if (!doc) return { note: "egp-no-signed-bundle" };
+  if (knownUrl && doc.url === knownUrl) return { url: doc.url, note: "unchanged" };
 
   const dir = join(env.blobDir, "bidding", `${projectId}-signed`);
   await mkdir(dir, { recursive: true });
@@ -193,13 +216,13 @@ async function invitationText(projectId: string, url: string): Promise<string | 
 }
 
 /**
- * Re-check every BMA TOR whose stage can still move (NFR-02). Stages advance
+ * Re-check every tracked TOR (BMA or captured) whose stage can still move (NFR-02). Stages advance
  * and re-announcements move dates, so a once-read deadline is not final.
  */
 export async function refreshBidding(options: { limit?: number; log?: (line: string) => void } = {}) {
   const rows = await TorModel.find(
-    { bmaProjectId: { $ne: null }, biddingStage: { $in: LIVE_STAGES } },
-    { projectId: 1, bmaProjectId: 1, methodId: 1, bidClosesAt: 1, deadlineEvidence: 1 },
+    { $or: [{ bmaProjectId: { $ne: null } }, { trackBidding: true }], biddingStage: { $in: LIVE_STAGES } },
+    { projectId: 1, bmaProjectId: 1, trackBidding: 1, methodId: 1, bidClosesAt: 1, deadlineEvidence: 1 },
   )
     .limit(options.limit ?? 0)
     .lean();

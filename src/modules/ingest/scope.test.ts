@@ -50,3 +50,30 @@ describe("isSoftwareCandidate", () => {
     for (const r of cases) expect(isSoftwareCandidate(r)).toBe(classifyRaw(r).classification.isSoftware);
   });
 });
+
+import { parseCaptureInput } from "./ingest.validation.ts";
+
+describe("parseCaptureInput", () => {
+  test("keeps 11-digit ids, counts the rest, collapses duplicates", () => {
+    const r = parseCaptureInput({
+      source: "egp-csv",
+      projects: [
+        { projectId: "69099316505", title: "  ระบบ  " },
+        { projectId: "69099316505", title: "duplicate" },
+        { projectId: "6909931650" },
+        { projectId: "690993165051" },
+        { projectId: "abc" },
+        null,
+      ],
+    });
+    expect(r.projects).toEqual([{ projectId: "69099316505", title: "ระบบ", agency: undefined, province: undefined }]);
+    // The duplicate is collapsed, not invalid.
+    expect(r.invalid).toBe(4);
+    expect(r.source).toBe("egp-csv");
+  });
+
+  test("rejects a missing array and oversized batches", () => {
+    expect(() => parseCaptureInput({})).toThrow("projects must be an array");
+    expect(() => parseCaptureInput({ projects: Array(2001).fill({ projectId: "69099316505" }) })).toThrow("at most");
+  });
+});

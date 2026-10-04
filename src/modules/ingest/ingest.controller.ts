@@ -1,6 +1,6 @@
 import type { Request, Response } from "express";
-import { getStatus, runDiscovery } from "./ingest.service.ts";
-import { parseRunInput } from "./ingest.validation.ts";
+import { captureProjects, getStatus, runDiscovery } from "./ingest.service.ts";
+import { parseCaptureInput, parseRunInput } from "./ingest.validation.ts";
 
 // Discovery is long — 16 pages, and enqueueing up to 511k rows. It is kicked off
 // and the request returns immediately (NFR-01: the API never waits on ingestion).
@@ -19,6 +19,11 @@ export async function startRun(req: Request, res: Response) {
     resume: input.resume,
     message: "discovery started — poll GET /api/ingest/status",
   });
+}
+
+/** Queue captured ids; processRow reads each from e-GP. Returns the counts. */
+export async function capture(req: Request, res: Response) {
+  res.json(await captureProjects(parseCaptureInput(req.body)));
 }
 
 export async function status(_req: Request, res: Response) {

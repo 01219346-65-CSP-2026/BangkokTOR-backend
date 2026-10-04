@@ -1,0 +1,28 @@
+{
+  "manifest_version": 3,
+  "name": "BangkokTOR e-GP capture",
+  "version": "0.1.0",
+  "description": "Sends the e-GP announcements you search for to BangkokTOR in one click. Reads only the results your own e-GP page receives.",
+  "permissions": ["storage"],
+  "host_permissions": [
+    "https://process5.gprocurement.go.th/*",
+    "http://localhost/*",
+    "http://127.0.0.1/*"
+  ],
+  "optional_host_permissions": ["https://*/*", "http://*/*"],
+  "background": { "service_worker": "background.js" },
+  "content_scripts": [
+    {
+      "matches": ["https://process5.gprocurement.go.th/*"],
+      "js": ["capture.js"],
+      "world": "MAIN",
+      "run_at": "document_start"
+    },
+    {
+      "matches": ["https://process5.gprocurement.go.th/*"],
+      "js": ["extract.js", "panel.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "options_ui": { "page": "options.html", "open_in_tab": false }
+}

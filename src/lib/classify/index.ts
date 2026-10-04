@@ -14,7 +14,9 @@ import {
 // Bumped whenever the rules change, so a backfill knows which TORs were
 // classified by which version and what still needs redoing.
 // v2 (2026-09-30): adds workTypes.
-export const CLASSIFIER_VERSION = 2;
+// v3 (2026-10-03): bare "ประกวดราคา" is e-bidding, not selection; software
+//     terms โปรแกรมประยุกต์ / คลังข้อมูล / data warehouse.
+export const CLASSIFIER_VERSION = 3;
 
 export type ClassifyInput = {
   projectName: string;

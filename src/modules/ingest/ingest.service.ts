@@ -16,6 +16,10 @@ import { QueueModel, type QueueDoc } from "./queue.model.ts";
 import { RunModel } from "./run.model.ts";
 import { classifyRaw, isSoftwareCandidate, scopeOf, type Classified } from "./scope.ts";
 import { WatermarkModel } from "./watermark.model.ts";
+import type { CaptureInput } from "./ingest.validation.ts";
+import { egpListingUrl } from "../../lib/sources/ckan/normalize.ts";
+import { procurementFields } from "../../lib/sources/egp/procurement.ts";
+import { COL } from "../../lib/sources/ckan/columns.ts";
 
 // Services take plain arguments and return plain data (§6) — that is what lets
 // a worker or a scheduler call them without an HTTP request in sight.
@@ -357,6 +361,55 @@ async function enqueue(raw: RawProject, runId: string): Promise<"enqueued" | "sk
   return res.upsertedCount > 0 ? "enqueued" : "skipped";
 }
 
+/**
+ * Project ids captured from e-GP's own search, in a person's browser, by the
+ * capture extension (tools/egp-capture). This is how open tenders from every
+ * agency get in: the search is Turnstile-gated and is never called from here;
+ * a human runs it, and only the ids come to us.
+ *
+ * Fast on purpose (NFR-01): no e-GP call in the request. New ids are queued
+ * with `egpCapture` set, and processRow fills them in from e-GP's per-project
+ * endpoints. Ids already held are not re-queued — their stage check is reset
+ * so the next refreshBidding re-reads them, since a captured invitation means
+ * the project has moved.
+ */
+export async function captureProjects(input: CaptureInput) {
+  const run = await RunModel.create({ sourceId: SOURCE_ID, kind: "capture" });
+  const ids = input.projects.map((p) => p.projectId);
+
+  const held = await TorModel.find({ sourceId: SOURCE_ID, projectId: { $in: ids } }, { projectId: 1, biddingStage: 1 }).lean();
+  const heldIds = new Set(held.map((t) => t.projectId));
+
+  // Held, but never stage-checked (the national history) or not yet awarded:
+  // put it in front of the next refreshBidding. A null biddingStage is one of
+  // LIVE_STAGES, so clearing stageCheckedAt alone is not what does it.
+  await TorModel.updateMany(
+    { sourceId: SOURCE_ID, projectId: { $in: [...heldIds] } },
+    { $set: { stageCheckedAt: null, trackBidding: true } },
+  );
+
+  let enqueued = 0;
+  for (const p of input.projects) {
+    if (heldIds.has(p.projectId)) continue;
+    const outcome = await enqueue(
+      {
+        projectId: p.projectId,
+        sourceUrl: egpListingUrl(p.projectId),
+        fields: { egpCapture: true, captureSource: input.source, title: p.title, agency: p.agency, province: p.province },
+      },
+      String(run._id),
+    );
+    if (outcome === "enqueued") enqueued++;
+  }
+
+  const counts = { received: input.projects.length, enqueued, alreadyHeld: heldIds.size, invalid: input.invalid };
+  await RunModel.updateOne(
+    { _id: run._id },
+    { $set: { status: "finished", finishedAt: new Date(), "counts.scanned": counts.received, "counts.enqueued": enqueued, "counts.refreshed": heldIds.size } },
+  );
+  return { runId: String(run._id), ...counts, alreadyQueued: counts.received - enqueued - heldIds.size };
+}
+
 // Stage ②–③: one claimed row. Normalize into `tors`, then try for documents.
 //
 // The TOR is saved BEFORE the document fetch, deliberately: normalization is
@@ -372,6 +425,28 @@ export async function processRow(
     header: row.header ?? [],
   };
 
+  // A captured id (captureProjects) carries no record yet: read it from e-GP's
+  // per-project endpoints, keyed like every other feed's row.
+  const captured = raw.fields.egpCapture === true;
+  if (captured) {
+    const read = await procurementFields(row.projectId, { province: raw.fields.province as string | undefined });
+    if (!read) {
+      await recordError({ sourceId: SOURCE_ID, projectId: row.projectId, kind: "capture-not-on-egp", message: "e-GP has no such project" });
+      return { ok: true };
+    }
+    if (read.unknownMethod) {
+      await recordError({
+        sourceId: SOURCE_ID,
+        projectId: row.projectId,
+        kind: "capture-unknown-method",
+        message: `e-GP methodId "${read.unknownMethod}" is not mapped (lib/sources/egp/procurement.ts METHOD_BY_ID)`,
+      });
+    }
+    // e-GP's title wins; the search row's is the fallback.
+    read.fields[COL.title] ??= raw.fields.title;
+    raw.fields = read.fields;
+  }
+
   // Classify before the write, so every TOR carries it on arrival.
   const classified = classifyRaw(raw);
   const { canonical, extras, classification } = classified;
@@ -381,9 +456,11 @@ export async function processRow(
   // claimed. Finish it without writing a TOR the website would never show.
   if (scopeOf(classified) !== "in-scope") return { ok: true };
 
+  // Seen while biddable (BMA or a capture) → keep its stage and deadline current.
+  const trackBidding = captured || Boolean(extras.bmaProjectId);
   const tor = await TorModel.findOneAndUpdate(
     { sourceId: canonical.sourceId, projectId: canonical.projectId },
-    { $set: { ...canonical, ...extras, ...classification } },
+    { $set: { ...canonical, ...extras, ...classification, ...(trackBidding ? { trackBidding: true } : {}) } },
     { upsert: true, returnDocument: "after", setDefaultsOnInsert: true },
   );
 
@@ -403,10 +480,10 @@ export async function processRow(
     return { ok: false, reason: "tor-upsert-failed" };
   }
 
-  // BMA rows can be bid on: find out where they stand and when bids close.
-  // A failure here costs the deadline, not the record — it is recorded and
-  // the daily refresh tries again.
-  if (tor.bmaProjectId) {
+  // BMA rows and captured rows can be bid on: find out where they stand and
+  // when bids close. A failure here costs the deadline, not the record — it is
+  // recorded and the daily refresh tries again.
+  if (tor.bmaProjectId || tor.trackBidding) {
     try {
       await checkBidding(tor);
     } catch (error) {

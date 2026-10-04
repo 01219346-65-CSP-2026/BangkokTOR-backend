@@ -1,5 +1,5 @@
 import { test, expect, describe } from "bun:test";
-import { classifyTor } from "./index.ts";
+import { CLASSIFIER_VERSION, classifyTor, toMethodId } from "./index.ts";
 
 // Every title below is verbatim from the live CKAN resource (600 rows sampled
 // 2026-09-08). 17 matched a naive software keyword scan; only 3 were genuine
@@ -138,6 +138,39 @@ describe("the verdict reports its own uncertainty", () => {
     expect(r.methodId).toBe("eBidding");
     expect(r.statusId).toBe("inProgress");
     expect(r.workTypes).toEqual(["development"]);
-    expect(r.classifierVersion).toBe(2);
+    expect(r.classifierVersion).toBe(CLASSIFIER_VERSION);
+  });
+});
+
+describe("procurement method vocabulary", () => {
+  // e-GP reports methodId 16 (e-bidding) for BMA projects labelled plain
+  // "ประกวดราคา"; it is not the invite-only selection method.
+  test("bare ประกวดราคา is e-bidding; คัดเลือก is selection", () => {
+    expect(toMethodId("ประกวดราคา")).toBe("eBidding");
+    expect(toMethodId("ประกวดราคาอิเล็กทรอนิกส์ (e-bidding)")).toBe("eBidding");
+    expect(toMethodId("คัดเลือก")).toBe("competitive");
+    expect(toMethodId("เฉพาะเจาะจง")).toBe("specific");
+  });
+});
+
+describe("terms added from real misses", () => {
+  // 69099310567 scored 38 before โปรแกรมประยุกต์ / คลังข้อมูล were terms.
+  test("a network-and-application maintenance tender is software", () => {
+    const r = classifyTor({
+      projectName:
+        "ประกวดราคาจ้างบำรุงรักษาระบบเครือข่ายและโปรแกรมประยุกต์ ตามโครงการคลังข้อมูลกลางกรุงเทพมหานคร (BMA Data Warehouse) ด้วยวิธีประกวดราคาอิเล็กทรอนิกส์ (e-bidding)",
+      procurementType: "จ้างทำของ/จ้างเหมาบริการ",
+      procurementMethod: "ประกวดราคาอิเล็กทรอนิกส์ (e-bidding)",
+    });
+    expect(r.isSoftware).toBe(true);
+  });
+
+  test("a cybersecurity maintenance tender is software", () => {
+    const r = classifyTor({
+      projectName:
+        "ประกวดราคาจ้างจัดจ้างบำรุงรักษาระบบป้องกันภัยคุมคามทางไซเบอร์ของระบบเครือข่ายและคอมพิวเตอร์ จำนวน 1 งาน ด้วยวิธีประกวดราคาอิเล็กทรอนิกส์ (e-bidding)",
+      procurementType: "จ้างทำของ/จ้างเหมาบริการ",
+    });
+    expect(r.isSoftware).toBe(true);
   });
 });

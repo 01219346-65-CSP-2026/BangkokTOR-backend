@@ -20,6 +20,7 @@
     "backup-collections": "bun run src/backup-collections.ts",
     "move-national-out": "bun run src/move-national-out.ts",
     "restore-from-backup": "bun run src/restore-from-backup.ts",
+    "backfill-province": "bun run src/backfill-province.ts",
     "cleanup-document-files": "bun run src/cleanup-document-files.ts"
   },
   "devDependencies": {

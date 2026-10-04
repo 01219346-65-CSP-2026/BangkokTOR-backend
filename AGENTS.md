@@ -182,6 +182,32 @@ back into live (used 2026-10-02 to restore the 4,475 national TORs).
   project keeps the `flowName` of the step it stopped at, so cancellation is read from
   `getProjectDetail.projectStatus` ("R"; "A" = active).
 
+### Open tenders from every agency — the capture extension (2026-10-03)
+
+Nationally there are ~1,060 biddable software tenders a year (FY2569: 723 e-bidding, 336
+selection), so roughly 40–60 are open at any moment. Every agency's open tenders are
+listed only in e-GP's search, which is Turnstile-gated. **That search is never called from
+code, and Turnstile is never worked around.** A person runs it in their own browser, and
+`tools/egp-capture` (a Chrome/Brave MV3 extension) does three things:
+- it reads the responses e-GP returns to that page, and only those (`…/announcement`,
+  `…/announcement/csv`);
+- it pulls the 11-digit project ids out of them;
+- it sends them, on one click, to `POST /api/ingest/capture` (admin token, 2,000 per call).
+
+It never sends its own e-GP request and never touches `X-Announcement-Token`. See its README.
+
+- The endpoint only queues ids (`payload.egpCapture`). It makes no e-GP call (NFR-01).
+  Ids already held get `trackBidding: true` and are re-checked.
+- `processRow` fills captured rows from the ungated `getProcurementDetail` and
+  `getProjectDetail` (`lib/sources/egp/procurement.ts procurementFields`). Then the
+  usual classify → TOR → `checkBidding` runs. Without a BMA id, the deadline comes from
+  e-GP's signed bundle.
+- e-GP `methodId`: 16 = e-bidding, 19 = เฉพาะเจาะจง. Selection's code is unseen;
+  unknown codes are recorded as `capture-unknown-method`, never guessed.
+- `trackBidding` marks the TORs `refreshBidding` follows: BMA rows and captures. The
+  awarded national history is not tracked.
+- Bare "ประกวดราคา" is e-bidding, not selection (`classify/vocabulary.ts`, v3).
+
 ### Source A — the BMA e-GP API
 
 Base `https://appapi` host `https://egp2.bangkok.go.th/appapi/api`, files on

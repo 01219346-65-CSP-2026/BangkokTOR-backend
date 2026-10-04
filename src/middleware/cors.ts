@@ -8,13 +8,21 @@ import { env, isProduction } from "../config/env.ts";
 // no auth, so the CORS header is currently the only thing standing between a
 // stranger's browser tab and the whole pipeline's internals.
 
-function isAllowed(origin: string | undefined): origin is string {
-  return Boolean(origin) && env.corsOrigins.includes(origin!);
+function isAllowed(origin: string | undefined, path: string): origin is string {
+  if (!origin) return false;
+  if (env.corsOrigins.includes(origin)) return true;
+  // The e-GP capture extension (tools/egp-capture) posts from its own origin,
+  // chrome-extension://<id>, and the id differs per install. Allowed on the
+  // capture route only, which still requires X-Admin-Token; a web page can
+  // never claim a chrome-extension:// origin, so this opens nothing to sites.
+  return origin.startsWith("chrome-extension://") && path === CAPTURE_PATH;
 }
+
+const CAPTURE_PATH = "/api/ingest/capture";
 
 export const cors: RequestHandler = (req, res, next) => {
   const origin = req.headers.origin;
-  const allowed = isAllowed(origin);
+  const allowed = isAllowed(origin, req.path);
 
   if (allowed) {
     res.setHeader("Access-Control-Allow-Origin", origin);
