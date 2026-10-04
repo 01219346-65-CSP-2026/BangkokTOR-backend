@@ -9,11 +9,12 @@ import { SOURCE_ID } from "../../lib/sources/ckan/index.ts";
 import { DocumentModel } from "../ingest/document.model.ts";
 import { recordError } from "../ingest/ingest.service.ts";
 import { TorModel } from "../tor/tor.model.ts";
+import { tagTorSkills } from "../tor/tor.skills.ts";
 import { ExtractionQueueModel } from "./extraction.model.ts";
 import { buildFullText } from "../../lib/extract/fulltext.ts";
 import { TorTextModel } from "./torText.model.ts";
 
-// Stage ④–⑤: bundle on disk -> PDFs -> text -> chunks a grader can read.
+// Stage ④–⑤: bundle on disk -> PDFs -> full text a grader can read.
 
 export type EnqueueOptions = { limit?: number };
 
@@ -64,15 +65,51 @@ type ExtractRow = {
   localPath: string;
 };
 
+type BundleOutcome = { ok: true; note?: string } | { ok: false; reason: string };
+
 /**
  * Process one claimed bundle. Every failure that will not improve on a retry
  * (a bomb, a corrupt archive, a bundle of pure scans) is recorded on the TOR as
  * `extraction_incomplete` and returned as ok — retrying it would burn the
  * attempt budget on a certainty.
+ *
+ * Once the outcome is final, the zip and the PDFs expanded from it are deleted
+ * (see discardFiles). A retryable failure keeps them: the next attempt needs
+ * the zip, and re-downloading it would cost more than the disk.
  */
-export async function processBundle(
-  row: ExtractRow,
-): Promise<{ ok: true; note?: string } | { ok: false; reason: string }> {
+export async function processBundle(queued: ExtractRow): Promise<BundleOutcome> {
+  const outcome = await extractBundle(queued);
+  if (outcome.ok) await discardFiles(queued);
+  return outcome;
+}
+
+/**
+ * Nothing downstream reads the files once extraction is done: grading, skill
+ * tags and summaries all read tor_texts. Keeping them cost ~67 MB a project
+ * (59 GB for 887). The documents rows stay — filename, pages, text layer — and
+ * their url is the e-GP bundle link, which the site offers instead.
+ */
+async function discardFiles(row: Pick<ExtractRow, "projectId" | "documentId" | "localPath">) {
+  if (env.keepDocumentFiles) return;
+
+  await rm(row.localPath, { force: true });
+  // A projectId is an e-GP number; anything else must not become a path.
+  if (/^\d+$/.test(row.projectId)) {
+    await rm(join(env.extractDir, row.projectId), { recursive: true, force: true });
+  }
+
+  await DocumentModel.updateMany(
+    { $or: [{ _id: row.documentId }, { parentDocumentId: row.documentId }] },
+    { $set: { localPath: null } },
+  );
+}
+
+async function extractBundle(queued: ExtractRow): Promise<BundleOutcome> {
+  // A queue row's torId goes stale when its TOR is re-created; the bundle
+  // document is kept in step, so the id is read from there.
+  const bundle = await DocumentModel.findById(queued.documentId, { torId: 1 }).lean();
+  const row = { ...queued, torId: bundle?.torId ?? queued.torId };
+
   const dir = join(env.extractDir, row.projectId);
   const jsonDir = join(dir, "_json");
 
@@ -110,6 +147,13 @@ export async function processBundle(
   }
 
   const triaged = triageBundle(loaded.pdfs);
+
+  // Every member is kept and listed — scans included. A reader can open a
+  // scanned PDF even though the grader cannot read it.
+  await recordExtractedPdfs(
+    row,
+    triaged.all.map((pdf) => ({ ...pdf, textLayer: pdf.triage.textLayer })),
+  );
 
   // The bundle is one `documents` row, so its textLayer is the bundle-level
   // verdict: readable if ANY member is. The per-member split is kept on the
@@ -177,12 +221,71 @@ export async function processBundle(
     { $set: { status: "extraction_pending", statusReason: null } },
   );
 
-  // The expanded PDFs and the loader JSON are intermediates; the chunks in
-  // Mongo are the product. Keeping them would cost gigabytes per thousand
-  // bundles for nothing.
-  await rm(dir, { recursive: true, force: true });
+  // Tag the TOR now that it has reached the grading queue.
+  await tagTorSkills(row.torId);
+
+  // The loader JSON is an intermediate. The expanded PDFs go too, in
+  // discardFiles, unless KEEP_DOCUMENT_FILES — then each `extractedPdf` row is
+  // served from GET /api/tors/:id/documents/:documentId/file.
+  await rm(jsonDir, { recursive: true, force: true });
 
   return { ok: true };
+}
+
+export type ExtractedPdfInput = {
+  name: string;
+  path: string;
+  bytes: number;
+  /** Null when the PDF was expanded but never read (the backfill). */
+  pages?: number | null;
+  textLayer?: "digital" | "scanned" | "unreadable" | null;
+};
+
+/**
+ * One `documents` row per expanded PDF. Keyed on the bundle id plus the entry
+ * name, so a retry updates the same rows instead of adding more.
+ */
+export async function recordExtractedPdfs(
+  row: Pick<ExtractRow, "projectId" | "documentId">,
+  pdfs: ExtractedPdfInput[],
+) {
+  // torId comes from the bundle, not the caller: queue rows can carry a stale one.
+  const bundle = await DocumentModel.findById(row.documentId, { url: 1, torId: 1 }).lean();
+  if (!bundle) return;
+
+  for (const pdf of pdfs) {
+    const externalId = `${String(row.documentId)}#${pdf.name}`;
+    await DocumentModel.updateOne(
+      { sourceId: SOURCE_ID, projectId: row.projectId, externalId },
+      {
+        $set: {
+          localPath: pdf.path,
+          bytes: pdf.bytes,
+          pages: pdf.pages ?? null,
+          textLayer: pdf.textLayer ?? null,
+          fetchedAt: new Date(),
+          torId: bundle.torId,
+        },
+        $setOnInsert: {
+          kind: "extractedPdf",
+          // The portal has no per-PDF link; the bundle it came out of is the
+          // closest source fact.
+          url: bundle.url,
+          filename: pdf.name,
+          parentDocumentId: row.documentId,
+        },
+      },
+      { upsert: true },
+    );
+  }
+
+  // A re-extraction that yields fewer members must not leave rows pointing at
+  // files that no longer exist.
+  await DocumentModel.deleteMany({
+    kind: "extractedPdf",
+    parentDocumentId: row.documentId,
+    filename: { $nin: pdfs.map((pdf) => pdf.name) },
+  });
 }
 
 function bundleTextLayer(t: ReturnType<typeof triageBundle>) {

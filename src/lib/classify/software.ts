@@ -51,6 +51,22 @@ const STRONG_POSITIVE: Array<[string, number]> = [
   ["แพลตฟอร์ม", 35],
   ["คลาวด์", 25],
   ["ปัญญาประดิษฐ์", 35],
+  // Both missed a real e-bidding tender (69099310567, "บำรุงรักษาระบบเครือข่าย
+  // และโปรแกรมประยุกต์ … คลังข้อมูลกลางกรุงเทพมหานคร (BMA Data Warehouse)"),
+  // which scored 38 against the 40 threshold (2026-10-03).
+  ["โปรแกรมประยุกต์", 40],
+  ["คลังข้อมูล", 30],
+  ["data warehouse", 30],
+  // A real cybersecurity-maintenance tender (69109034301) scored 33 without
+  // it. Hardware buys that mention ไซเบอร์ still carry ครุภัณฑ์/ซื้อ penalties.
+  ["ไซเบอร์", 30],
+  // Software *work* on a program, not a program bundled with hardware ("กล้อง
+  // จุลทรรศน์…พร้อมโปรแกรม"), which is why bare โปรแกรม is not a term. Each
+  // missed a real maintenance tender from an e-GP capture (2026-10-04):
+  // POLIS 69089686829, AFIS 69089650774, 69079604624, GIS 69099273704.
+  ["บำรุงรักษาโปรแกรม", 40],
+  ["ปรับปรุงโปรแกรม", 40],
+  ["สารสนเทศภูมิศาสตร์", 35],
 ];
 
 const WEAK_POSITIVE: Array<[string, number]> = [

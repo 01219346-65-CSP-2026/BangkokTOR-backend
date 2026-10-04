@@ -2,6 +2,7 @@ import { parseThaiDate, parseThb, thaiDigitsToArabic } from "../../thai/buddhist
 import type { CanonicalTor, RawProject } from "../types.ts";
 import { detectPhantomColumns, realignRow, type CkanRow } from "./client.ts";
 import { COL } from "./columns.ts";
+import { BMA_ID_FIELD } from "../bma/columns.ts";
 
 export const SOURCE_ID = "ckan-egp";
 
@@ -56,8 +57,19 @@ export function parsePoint(row: CkanRow): { type: "Point"; coordinates: number[]
   return { type: "Point", coordinates: [lng, lat] };
 }
 
+/**
+ * The e-GP announcement search, pre-filled with the project number. The old
+ * process3 `procsearch.sch?proj_id=` link no longer lands on the project, so
+ * TORs ingested before this change carry it in the database; the public
+ * serializer rewrites those on read (tor.serialize.ts, publicSourceUrl).
+ */
 export function egpListingUrl(projectId: string): string {
-  return `https://process3.gprocurement.go.th/egp2procmainWeb/jsp/procsearch.sch?announceType=&proj_id=${encodeURIComponent(projectId)}`;
+  return `https://process5.gprocurement.go.th/egp-agpc01-web/announcement?keywordSearch=${encodeURIComponent(projectId)}`;
+}
+
+/** True for the retired process3 link, or no link at all. */
+export function isLegacyEgpUrl(url: string | null | undefined): boolean {
+  return !url || url.includes("process3.gprocurement.go.th/egp2procmainWeb");
 }
 
 // Realign before reading anything past จังหวัด, or a company name is filed as
@@ -109,6 +121,9 @@ export function normalizeExtras(raw: RawProject) {
     contractNumber: strOrNull(row, COL.contractNumber),
     contractSignedAt: parseThaiDate(str(row, COL.contractSignedAt)),
     contractEndsAt: parseThaiDate(str(row, COL.contractEndsAt)),
+    // Only BMA-portal rows carry it; it is what the bidding check reads the
+    // ประกาศเชิญชวน through (modules/bidding).
+    bmaProjectId: strOrNull(row, BMA_ID_FIELD),
   };
 }
 

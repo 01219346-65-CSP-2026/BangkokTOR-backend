@@ -7,7 +7,7 @@ export const RUN_STATUSES = ["running", "finished", "failed"] as const;
 const runSchema = new Schema(
   {
     sourceId: { type: String, required: true },
-    kind: { type: String, enum: ["discover", "fetch"], required: true },
+    kind: { type: String, enum: ["discover", "fetch", "capture"], required: true },
     status: { type: String, enum: RUN_STATUSES, default: "running", required: true },
 
     startedAt: { type: Date, default: Date.now },
@@ -17,6 +17,15 @@ const runSchema = new Schema(
       scanned: { type: Number, default: 0 },
       enqueued: { type: Number, default: 0 },
       skipped: { type: Number, default: 0 },
+      // Scanned rows dropped at discovery because they are not software work.
+      notSoftware: { type: Number, default: 0 },
+      // In-scope rows for projects already held, whose portal fields were rewritten.
+      refreshed: { type: Number, default: 0 },
+      // Software rows dropped because nobody outside can bid (BMA feed only).
+      notBiddable: { type: Number, default: 0 },
+      // BMA feed: TORs whose stage/deadline were re-checked, and how many are open.
+      biddingChecked: { type: Number, default: 0 },
+      open: { type: Number, default: 0 },
       failed: { type: Number, default: 0 },
     },
 

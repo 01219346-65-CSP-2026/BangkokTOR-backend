@@ -9,6 +9,7 @@ torRouter.get("/stats", controller.stats);
 torRouter.get("/agencies", controller.agencies);
 torRouter.get("/", controller.list);
 torRouter.get("/:id", controller.detail);
+torRouter.get("/:id/documents/:documentId/file", controller.documentFile);
 
 // The private grade: a letter grade plus verbatim evidence quotes about a named
 // government agency. The FR-19 gate in tor.serialize.ts keeps it off every

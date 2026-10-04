@@ -22,6 +22,59 @@ export function parseRunInput(body: unknown): RunInput {
   return { limit, resume: input.resume !== false };
 }
 
+/** e-GP project number: BE year + month + 7 digits, e.g. 69099316505. */
+export const EGP_PROJECT_ID = /^\d{11}$/;
+export const MAX_CAPTURE = 2_000;
+export const CAPTURE_SOURCES = ["egp-search", "egp-csv"] as const;
+
+export type CapturedProject = { projectId: string; title?: string; agency?: string; province?: string };
+export type CaptureInput = {
+  projects: CapturedProject[];
+  source: (typeof CAPTURE_SOURCES)[number];
+  /** Rows that were not an 11-digit e-GP project number. */
+  invalid: number;
+};
+
+const text = (v: unknown, max = 500) =>
+  typeof v === "string" && v.trim() ? v.trim().slice(0, max) : undefined;
+
+/**
+ * The capture extension's batch (tools/egp-capture). Bad rows are counted,
+ * not fatal: one malformed id must not throw away the rest of a search.
+ * Duplicates collapse to the first occurrence.
+ */
+export function parseCaptureInput(body: unknown): CaptureInput {
+  const input = (body ?? {}) as Record<string, unknown>;
+  if (!Array.isArray(input.projects)) throw new HttpError(400, "projects must be an array");
+  if (input.projects.length > MAX_CAPTURE) {
+    throw new HttpError(400, `at most ${MAX_CAPTURE} projects per call`);
+  }
+
+  const seen = new Map<string, CapturedProject>();
+  let invalid = 0;
+  for (const raw of input.projects) {
+    const row = (raw ?? {}) as Record<string, unknown>;
+    const projectId = String(row.projectId ?? "").trim();
+    if (!EGP_PROJECT_ID.test(projectId)) {
+      invalid++;
+      continue;
+    }
+    if (!seen.has(projectId)) {
+      seen.set(projectId, {
+        projectId,
+        title: text(row.title),
+        agency: text(row.agency, 200),
+        province: text(row.province, 100),
+      });
+    }
+  }
+
+  const source = (CAPTURE_SOURCES as readonly string[]).includes(String(input.source))
+    ? (input.source as CaptureInput["source"])
+    : "egp-search";
+  return { projects: [...seen.values()], source, invalid };
+}
+
 export type TorQuery = {
   page: number;
   limit: number;
@@ -30,7 +83,6 @@ export type TorQuery = {
   q?: string;
   minBudget?: number;
   category?: string;
-  isSoftware?: boolean;
 };
 
 export function parseTorQuery(query: Record<string, unknown>): TorQuery {
@@ -44,11 +96,6 @@ export function parseTorQuery(query: Record<string, unknown>): TorQuery {
     throw new HttpError(400, "minBudget must be a number");
   }
 
-  // Absent means "don't filter"; only an explicit true/false narrows it.
-  let isSoftware: boolean | undefined;
-  if (query.isSoftware === "true" || query.isSoftware === true) isSoftware = true;
-  else if (query.isSoftware === "false" || query.isSoftware === false) isSoftware = false;
-
   return {
     page,
     limit,
@@ -57,7 +104,6 @@ export function parseTorQuery(query: Record<string, unknown>): TorQuery {
     q: typeof query.q === "string" && query.q ? query.q : undefined,
     minBudget,
     category: typeof query.category === "string" && query.category ? query.category : undefined,
-    isSoftware,
   };
 }
 

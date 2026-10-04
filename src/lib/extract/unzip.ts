@@ -46,7 +46,13 @@ function findEocd(buf: Buffer): number {
   return -1;
 }
 
-export function readCentralDirectory(buf: Buffer): ZipEntry[] | null {
+/**
+ * `buf` is normally the whole archive. It may instead be only its TAIL, starting
+ * at file offset `base` — how an 843 MB bulk file is listed without being read
+ * (sources/govspending/bulk.ts). Offsets in the directory are absolute, so they
+ * are shifted by `base`; entry offsets returned are still absolute.
+ */
+export function readCentralDirectory(buf: Buffer, base = 0): ZipEntry[] | null {
   const eocd = findEocd(buf);
   if (eocd < 0) return null;
 
@@ -58,7 +64,7 @@ export function readCentralDirectory(buf: Buffer): ZipEntry[] | null {
   if (count === 0xffff || offset === 0xffffffff) {
     const locator = eocd - 20;
     if (locator >= 0 && buf.readUInt32LE(locator) === ZIP64_LOCATOR_SIGNATURE) {
-      const zip64 = Number(buf.readBigUInt64LE(locator + 8));
+      const zip64 = Number(buf.readBigUInt64LE(locator + 8)) - base;
       if (zip64 >= 0 && zip64 + 56 <= buf.length && buf.readUInt32LE(zip64) === ZIP64_EOCD_SIGNATURE) {
         count = Number(buf.readBigUInt64LE(zip64 + 32));
         offset = Number(buf.readBigUInt64LE(zip64 + 48));
@@ -67,7 +73,9 @@ export function readCentralDirectory(buf: Buffer): ZipEntry[] | null {
   }
 
   const entries: ZipEntry[] = [];
-  let p = offset;
+  let p = offset - base;
+  // The tail handed in does not reach back to the directory's start.
+  if (p < 0) return null;
 
   for (let i = 0; i < count; i++) {
     if (p + 46 > buf.length || buf.readUInt32LE(p) !== CENTRAL_SIGNATURE) break;

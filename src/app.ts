@@ -19,6 +19,9 @@ export function createApp() {
   // Before the body parser: a preflight carries no body and should be answered
   // without one being parsed.
   app.use(cors);
+  // A capture batch (up to 2,000 projects with titles) passes the 100 KB
+  // default; only that route gets the larger limit.
+  app.use("/api/ingest/capture", express.json({ limit: "2mb" }));
   app.use(express.json());
 
   app.use(routes);
