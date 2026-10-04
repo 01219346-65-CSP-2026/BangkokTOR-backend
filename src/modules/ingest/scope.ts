@@ -72,3 +72,4 @@ export function scopeOf(c: Classified, fiscalYear?: number): ScopeVerdict {
   if (fiscalYear !== undefined && c.extras.fiscalYear !== fiscalYear) return "other-year";
   return c.classification.isSoftware ? "in-scope" : "not-software";
 }
+

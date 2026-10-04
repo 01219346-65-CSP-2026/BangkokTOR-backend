@@ -70,14 +70,18 @@ const CONTRACT_CONTAINS: Array<[string, TorContractId]> = [
   ["ซื้อ", "purchase"],
 ];
 
-// Order matters: the e-bidding variant must be tested before bare ประกวดราคา,
-// which is the non-electronic competitive method.
+// Bare ประกวดราคา is e-bidding: since the 2017 procurement act a price
+// tender runs through e-GP's e-bidding, and e-GP itself reports methodId 16
+// (e-bidding) for BMA projects labelled plain "ประกวดราคา" (verified
+// 2026-10-03). It used to map to `competitive`, which is selection — คัดเลือก,
+// an invite-only method. Order matters: คัดเลือก is tested first so a label
+// carrying both words reads as selection.
 const METHOD_CONTAINS: Array<[string, TorMethodId]> = [
   ["e-bidding", "eBidding"],
   ["ประกวดราคาอิเล็กทรอนิกส์", "eBidding"],
   ["เฉพาะเจาะจง", "specific"],
   ["คัดเลือก", "competitive"],
-  ["ประกวดราคา", "competitive"],
+  ["ประกวดราคา", "eBidding"],
 ];
 
 const STATUS_CONTAINS: Array<[string, TorStatusId]> = [

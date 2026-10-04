@@ -7,7 +7,7 @@ import { MAX_BULLET_CHARS, MAX_BULLETS, type SummaryBullet } from "./types.ts";
 // is reading generated output, because a marker list cannot catch a judgement
 // phrased around it.
 
-const bullet = (text: string, chunkIndex = 0): SummaryBullet => ({ text, chunkIndex });
+const bullet = (text: string): SummaryBullet => ({ text });
 
 describe("isDescriptive", () => {
   test("accepts a point that states a requirement", () => {
@@ -113,29 +113,22 @@ describe("sanitizeBullets", () => {
 
   test("de-duplicates — a bundle repeats the same requirement across documents", () => {
     const kept = sanitizeBullets([
-      bullet("วางหลักประกันซองร้อยละ 5", 1),
-      bullet("วางหลักประกันซองร้อยละ 5", 7),
-      bullet("  วางหลักประกันซองร้อยละ 5  ", 9),
+      bullet("วางหลักประกันซองร้อยละ 5"),
+      bullet("วางหลักประกันซองร้อยละ 5"),
+      bullet("  วางหลักประกันซองร้อยละ 5  "),
     ]);
     expect(kept).toHaveLength(1);
-    // The first occurrence wins, so the citation points at the earliest chunk.
-    expect(kept[0]?.chunkIndex).toBe(1);
   });
 
   test("caps the list at MAX_BULLETS", () => {
     const many = Array.from({ length: MAX_BULLETS + 5 }, (_, i) =>
-      bullet(`ข้อกำหนดที่ ${i}`, i),
+      bullet(`ข้อกำหนดที่ ${i}`),
     );
     expect(sanitizeBullets(many)).toHaveLength(MAX_BULLETS);
   });
 
-  test("keeps the chunkIndex, which is what makes a point traceable to a page", () => {
-    const [only] = sanitizeBullets([bullet("กำหนดส่งมอบภายใน 180 วัน", 4)]);
-    expect(only?.chunkIndex).toBe(4);
-  });
-
   test("survives a non-string text field from a malformed model response", () => {
-    const junk = [{ text: null, chunkIndex: 0 }] as unknown as SummaryBullet[];
+    const junk = [{ text: null }] as unknown as SummaryBullet[];
     expect(sanitizeBullets(junk)).toEqual([]);
   });
 });

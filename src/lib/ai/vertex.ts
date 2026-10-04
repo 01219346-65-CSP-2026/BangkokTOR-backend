@@ -11,7 +11,7 @@ import type { Grader, Summarizer } from "./types.ts";
 export function createVertexGrader(): Grader {
   return {
     id: "vertex:unconfigured",
-    async gradeChunks() {
+    async grade() {
       throw new Error(
         "AI_PROVIDER=vertex is not implemented yet — set AI_PROVIDER=ollama, or build src/lib/ai/vertex.ts",
       );

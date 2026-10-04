@@ -1,11 +1,6 @@
 import type { Types } from "mongoose";
 import { createGrader, createSummarizer, sanitizeBullets } from "../../lib/ai/index.ts";
-import {
-  isVerbatim,
-  type GradeChunk,
-  type RuleFinding,
-  type SummaryBullet,
-} from "../../lib/ai/types.ts";
+import { isVerbatim, type RuleFinding, type SummaryBullet } from "../../lib/ai/types.ts";
 import { AI_RULES, LEGITIMACY_RULES, RULES, ruleByCode } from "../../lib/grade/rules.ts";
 import { gradeFindings, skipFairness, type Finding } from "../../lib/grade/score.ts";
 import { TorTextModel } from "../extract/torText.model.ts";
@@ -30,9 +25,8 @@ function aiRulesFor(phase: "legitimacy" | "fairness") {
 // Both are checked against text we hold, so neither costs a model call.
 function checkDeterministic(
   tor: { agency?: string | null; budget?: number | null },
-  chunks: GradeChunk[],
+  haystack: string,
 ): Finding[] {
-  const haystack = chunks.map((c) => c.text).join(" ");
   const findings: Finding[] = [];
 
   // IDMISMATCH — the agency on the record should appear in its own document.
@@ -43,7 +37,6 @@ function checkDeterministic(
       fired: !present,
       evidence: present ? tor.agency : "",
       checked: true,
-      chunkIndex: null,
     });
   } else {
     // No agency on the record: nothing to compare against, so nothing is
@@ -62,7 +55,6 @@ function checkDeterministic(
       fired: !present,
       evidence: present ? whole : "",
       checked: true,
-      chunkIndex: null,
     });
   } else {
     findings.push({ code: "BUDGETMISMATCH", fired: false, evidence: "", checked: false });
@@ -72,25 +64,20 @@ function checkDeterministic(
 }
 
 /** Model findings -> scorer findings, dropping anything that fails the gate. */
-function toFindings(raw: RuleFinding[], chunks: GradeChunk[]): Finding[] {
-  const byIndex = new Map(chunks.map((c) => [c.index, c]));
-
+function toFindings(raw: RuleFinding[], text: string): Finding[] {
   return raw.map((f) => {
-    const chunk = f.chunkIndex === null ? undefined : byIndex.get(f.chunkIndex);
-
     // Second gate. ollama.ts already discards an unverifiable quote, but this
     // is the boundary that writes to the database, so it re-checks rather than
     // trusting a provider to have done it. A fired rule without a real quote
     // is downgraded to not-fired, never stored as a finding.
-    const verified = f.fired && !!chunk && isVerbatim(f.evidence, chunk.text);
+    const verified = f.fired && f.checked && isVerbatim(f.evidence, text);
 
     return {
       code: f.code,
       fired: verified,
       evidence: verified ? f.evidence : "",
       // A rule the router never sent anywhere was not evaluated.
-      checked: f.chunkIndex !== null,
-      chunkIndex: f.chunkIndex,
+      checked: f.checked,
     };
   });
 }
@@ -115,17 +102,14 @@ export async function gradeTor(torId: Types.ObjectId | string): Promise<GradeOut
     return { ok: false, reason: "no-text" };
   }
 
-  // The grader still expects chunks. feat/91 replaces this temporary adapter.
-  const chunks: GradeChunk[] = [
-    { index: 0, headingPath: [], text: storedText.fullText },
-  ];
+  const text = storedText.fullText;
 
   const grader = createGrader();
-  const findings: Finding[] = [...checkDeterministic(tor, chunks)];
+  const findings: Finding[] = [...checkDeterministic(tor, text)];
 
   try {
-    const legitimacy = await grader.gradeChunks({ rules: aiRulesFor("legitimacy"), chunks });
-    findings.push(...toFindings(legitimacy, chunks));
+    const legitimacy = await grader.grade({ rules: aiRulesFor("legitimacy"), text });
+    findings.push(...toFindings(legitimacy, text));
 
     // REPUTATION and anything else the rulebook marks not_checked: recorded as
     // unchecked so the scorer leaves it out of the denominator entirely.
@@ -134,8 +118,8 @@ export async function gradeTor(torId: Types.ObjectId | string): Promise<GradeOut
     }
 
     if (!skipFairness(findings.filter((f) => isLegitimacy(f.code)))) {
-      const fairness = await grader.gradeChunks({ rules: aiRulesFor("fairness"), chunks });
-      findings.push(...toFindings(fairness, chunks));
+      const fairness = await grader.grade({ rules: aiRulesFor("fairness"), text });
+      findings.push(...toFindings(fairness, text));
     }
   } catch (error) {
     await recordError({
@@ -150,7 +134,7 @@ export async function gradeTor(torId: Types.ObjectId | string): Promise<GradeOut
 
   /*
    * The summary rides along with the grade because gradeTor has already paid
-   * for the expensive parts: the chunks are loaded and the model is warm. A
+   * for the expensive parts: the text is loaded and the model is warm. A
    * separate worker would need its own queue, heartbeat kind and claim query
    * to re-read the same rows.
    *
@@ -164,7 +148,7 @@ export async function gradeTor(torId: Types.ObjectId | string): Promise<GradeOut
   let bullets: SummaryBullet[] = [];
 
   try {
-    bullets = sanitizeBullets(await summarizer.summarize({ chunks }));
+    bullets = sanitizeBullets(await summarizer.summarize({ text }));
   } catch (error) {
     await recordError({
       projectId: tor.projectId,
@@ -187,7 +171,6 @@ export async function gradeTor(torId: Types.ObjectId | string): Promise<GradeOut
           phase: ruleByCode(f.code)?.phase ?? "fairness",
           evidence: f.evidence,
           checked: f.checked,
-          chunkIndex: f.chunkIndex ?? null,
         })),
         gradedAt: new Date(),
         graderVersion: GRADER_VERSION,

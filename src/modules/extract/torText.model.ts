@@ -29,4 +29,4 @@ export type TorText = InferSchemaType<typeof torTextSchema>;
 export type TorTextDoc = HydratedDocument<TorText>;
 export type TorTextLean = TorText & { _id: Types.ObjectId };
 
-export const TorTextModel = model<TorText>("TorChunk", torTextSchema);
+export const TorTextModel = model<TorText>("TorText", torTextSchema);

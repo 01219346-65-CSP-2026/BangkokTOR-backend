@@ -129,8 +129,6 @@ const COMPILED = (Object.entries(SKILL_ALIASES) as [SkillSlug, Alias[]][]).map(
 
 export type SkillSource = {
   text: string;
-  /** Null for text that is not a chunk, e.g. the project name. */
-  chunkIndex: number | null;
 };
 
 export type SkillTag = {
@@ -138,7 +136,6 @@ export type SkillTag = {
   source: "keyword";
   /** A verbatim window of the text around the hit, whitespace collapsed. */
   evidence: string;
-  chunkIndex: number | null;
 };
 
 /** Characters of context kept on each side of a hit. */
@@ -151,9 +148,8 @@ function evidenceAround(text: string, index: number, length: number): string {
 }
 
 /**
- * One tag per skill, from its first hit in source order — so pass the project
- * name first and chunks in reading order, and the quote is the most prominent
- * mention.
+ * One tag per skill, from its first hit in source order — so pass the most
+ * prominent text (the project name) first, and the quote is its mention.
  */
 export function tagSkills(sources: SkillSource[]): SkillTag[] {
   const tags: SkillTag[] = [];
@@ -167,7 +163,6 @@ export function tagSkills(sources: SkillSource[]): SkillTag[] {
           slug,
           source: "keyword",
           evidence: evidenceAround(source.text, match.index, match[0].length),
-          chunkIndex: source.chunkIndex,
         });
         break hit;
       }

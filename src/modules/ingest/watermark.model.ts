@@ -8,7 +8,7 @@ const watermarkSchema = new Schema(
     sourceId: { type: String, required: true, unique: true },
     // Which feed wrote this (ingest.service.ts runDiscovery). A cursor from one
     // feed means nothing to the other.
-    feed: { type: String, enum: ["ckan", "govspending", null], default: null },
+    feed: { type: String, enum: ["ckan", "govspending", "bma", null], default: null },
     // govspending: the bulk file's published version, and where in it the scan
     // stopped — a CSV entry name and data rows read from it.
     bulkUrl: { type: String, default: null },
@@ -25,6 +25,9 @@ const watermarkSchema = new Schema(
     lastOffset: { type: Number, default: 0 },
     lastSeenProjectId: { type: String, default: null },
     lastFullScanAt: { type: Date, default: null },
+    // When a BMA portal scan last finished. Separate from the national feed's
+    // state above, which shares this row.
+    bmaLastFullScanAt: { type: Date, default: null },
     totalRows: { type: Number, default: null },
   },
   { timestamps: true, versionKey: false, collection: "watermarks" },

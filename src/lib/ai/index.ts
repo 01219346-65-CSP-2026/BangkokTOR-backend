@@ -4,7 +4,7 @@ import { createVertexGrader, createVertexSummarizer } from "./vertex.ts";
 import type { Grader, Summarizer } from "./types.ts";
 
 export * from "./types.ts";
-export { routeChunks, unroutedRules, MAX_CHUNKS_PER_RULE } from "./route.ts";
+export { routeRules } from "./route.ts";
 export { isDescriptive, sanitizeBullets } from "./summaryGuard.ts";
 
 /** The one place a provider is chosen. Callers depend on Grader, never on a

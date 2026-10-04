@@ -1,11 +1,23 @@
 import { resolve, sep } from "node:path";
-import { isValidObjectId, type QueryFilter } from "mongoose";
+import { isValidObjectId, type PipelineStage, type QueryFilter } from "mongoose";
 import { env } from "../../config/env.ts";
 import { DocumentModel } from "../ingest/document.model.ts";
 import type { WorkTypeId } from "../../lib/classify/workType.ts";
 import { serialize, serializeDetail, serializeGrade } from "./tor.serialize.ts";
-import { TOR_CATEGORIES, TorModel, type Tor, type TorLean } from "./tor.model.ts";
 import { TorTextModel } from "../extract/torText.model.ts";
+import {
+  BIDDING_STATUSES,
+  CLOSING_SOON_FIELDS,
+  CLOSING_SOON_SORT,
+  DEFAULT_BIDDING,
+  biddingFilter,
+  biddingFilterFor,
+  closingSoonStages,
+  STAGE_EXPRESSION,
+  stageFilter,
+  type BiddingStatus,
+} from "./tor.bidding.ts";
+import { BIDDING_STAGES, type BiddingStage } from "../../lib/sources/egp/procurement.ts";
 
 import {
   TOR_CATEGORIES,
@@ -26,8 +38,8 @@ export type ListInput = {
   agency?: string;
   category?: (typeof TOR_CATEGORIES)[number];
   method?: (typeof TOR_METHODS)[number];
-  /** สถานะโครงการ exactly as the portal ships it — the options come from getStats(). */
-  projectStatus?: string;
+  /** สถานะโครงการ: the procurement stage (tor.bidding.ts stageFilter). */
+  stage?: BiddingStage;
   /** One software work type (lib/classify/workType.ts); matches TORs carrying it. */
   workType?: WorkTypeId;
   province?: string;
@@ -40,6 +52,8 @@ export type ListInput = {
   skills?: string[];
   /** Fit bands to keep. Needs `skills`; ignored without them. */
   fit?: FitBand[];
+  /** Open / upcoming / closed. Omitted → DEFAULT_BIDDING (open + upcoming). */
+  bidding?: BiddingStatus[];
   page: number;
   limit: number;
 };
@@ -53,13 +67,15 @@ const FIT_RANGES: Record<FitBand, { $gte: number; $lt?: number }> = {
   weak: { $gte: 0, $lt: 40 },
 };
 
-/** `newest` is the historical default (announcedAt desc) — every existing
- *  caller that omits `sort` must keep seeing that order.
+/** `closingSoon` is the default: the site exists to show what can still be
+ *  bid on, soonest deadline first (tor.bidding.ts closingSoonStages).
  *
  *  `bestMatch` only means something on the scored path (listScored); a caller
- *  that asks for it without skills gets `newest`. Rows with no tagged skills
- *  have a null fitScore, which sorts below every number, so they come last. */
-const SORTS: Record<(typeof TOR_SORTS)[number], Record<string, 1 | -1>> = {
+ *  that asks for it without skills gets `closingSoon`. Rows with no tagged
+ *  skills have a null fitScore, which sorts below every number, so they come
+ *  last. */
+type TorSort = (typeof TOR_SORTS)[number];
+const SORTS: Record<Exclude<TorSort, "closingSoon">, Record<string, 1 | -1>> = {
   newest: { announcedAt: -1 },
   oldest: { announcedAt: 1 },
   budgetHigh: { budget: -1 },
@@ -69,41 +85,54 @@ const SORTS: Record<(typeof TOR_SORTS)[number], Record<string, 1 | -1>> = {
 
 /** The statuses the public list shows — see the note in listTors. Agency
  *  and category counts use the same set, so a count always matches what
- *  choosing that option returns. */
-const LISTED = { $in: ["graded", "published", "documents_fetched"] as TorStatus[] };
+ *  choosing that option returns.
+ *
+ *  `extraction_pending` is a TOR whose text has been read and is waiting for
+ *  the grader — strictly further along than `documents_fetched`. Leaving it
+ *  out made extraction HIDE a TOR until grading ran (2026-10-02: all 9 BMA
+ *  TORs vanished the moment extract-worker finished them). */
+const LISTED = {
+  $in: ["graded", "published", "documents_fetched", "extraction_pending"] as TorStatus[],
+};
 
 /*
- * What the website is about: software work from the current fiscal year. Every
- * public read — list, facets, stats, a single TOR — goes through this, so a
- * row outside it is unreachable, not merely unlisted.
+ * What the website is about: software work, anywhere in Thailand, from this
+ * fiscal year or last. Every public read — list, facets, stats, a single TOR —
+ * goes through this, so a row outside it is unreachable, not merely unlisted.
  *
- * "Current" is the newest fiscal year among the software TORs we hold, not a
- * clock: data.go.th publishes a year months after it closes, so the calendar
- * would point at a year with no rows. When discovery starts ingesting the next
- * year, the site moves to it on its own.
+ * Location used to be Bangkok-only. Widened 2026-10-02 (Kelvin): more tenders
+ * matter more than the boundary, so every province is in scope and the
+ * จังหวัด filter (ListInput.province, getStats().byProvince) narrows it.
+ *
+ * "This year" is the Thai fiscal year by the calendar (October–September), and
+ * the one before it: a tender announced in September of FY2569 is bid on in
+ * October of FY2570. Open/closed is a separate, finer question (tor.bidding.ts).
+ * A BMA row whose year e-GP has not told us yet is kept — it is new by
+ * definition.
  */
-const SCOPE_TTL_MS = 5 * 60_000;
-let scopeCache: { fiscalYear: number | null; at: number } | null = null;
-
-async function currentFiscalYear(): Promise<number | null> {
-  if (scopeCache && Date.now() - scopeCache.at < SCOPE_TTL_MS) return scopeCache.fiscalYear;
-
-  const newest = await TorModel.findOne({ isSoftware: true, fiscalYear: { $ne: null } }, { fiscalYear: 1 })
-    .sort({ fiscalYear: -1 })
-    .lean();
-  scopeCache = { fiscalYear: newest?.fiscalYear ?? null, at: Date.now() };
-  return scopeCache.fiscalYear;
+export function thaiFiscalYear(now: Date = new Date()): number {
+  // Bangkok time: FY starts 1 October, 00:00 +07.
+  const bkk = new Date(now.getTime() + 7 * 3_600_000);
+  return bkk.getUTCFullYear() + 543 + (bkk.getUTCMonth() >= 9 ? 1 : 0);
 }
 
-async function publicScope(): Promise<QueryFilter<Tor>> {
-  const fiscalYear = await currentFiscalYear();
-  return fiscalYear === null
-    ? { status: LISTED, isSoftware: true }
-    : { status: LISTED, isSoftware: true, fiscalYear };
+function publicScope(now: Date = new Date()): QueryFilter<Tor> {
+  const fy = thaiFiscalYear(now);
+  return {
+    // env.listAllTors drops the pipeline-state gate (dev default) — see env.ts.
+    ...(env.listAllTors ? {} : { status: LISTED }),
+    isSoftware: true,
+    $or: [{ fiscalYear: { $in: [fy, fy - 1] } }, { fiscalYear: null, bmaProjectId: { $ne: null } }],
+  };
 }
 
 export async function listTors(input: ListInput) {
-  const filter: QueryFilter<Tor> = await publicScope();
+  const now = new Date();
+  const filter: QueryFilter<Tor> = publicScope(now);
+  // publicScope owns the top-level $or; further alternatives go under $and.
+  const and: QueryFilter<Tor>[] = [];
+  const bidding = biddingFilterFor(input.bidding ?? DEFAULT_BIDDING, now);
+  if (bidding) and.push(bidding as QueryFilter<Tor>);
 
   /*
    * What counts as a result.
@@ -126,8 +155,8 @@ export async function listTors(input: ListInput) {
   if (input.agency) filter.agency = input.agency;
   if (input.category) filter.category = input.category;
   if (input.method) filter.methodId = input.method;
-  if (input.province) filter["location.province"] = input.province;
-  if (input.projectStatus) filter.projectStatus = input.projectStatus;
+  if (input.province) filter.province = input.province;
+  if (input.stage) and.push(stageFilter(input.stage) as QueryFilter<Tor>);
   if (input.workType) filter.workTypes = input.workType;
 
   if (input.minBudget !== undefined || input.maxBudget !== undefined) {
@@ -145,16 +174,28 @@ export async function listTors(input: ListInput) {
   if (input.q) {
     // Escaped: a user-supplied "(" must not become a regex the database chokes on.
     const safe = input.q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    filter.projectName = { $regex: safe, $options: "i" };
+    const match = { $regex: safe, $options: "i" };
+    // The search box promises "title, agency, or project number" — the e-GP
+    // project id (e.g. 69079571189) and BMA's own id both count as the number.
+    and.push({
+      $or: [{ projectName: match }, { agency: match }, { projectId: match }, { bmaProjectId: match }],
+    } as QueryFilter<Tor>);
   }
 
-  if (input.skills?.length) return listScored(filter, input, input.skills);
+  if (and.length) filter.$and = and;
+
+  if (input.skills?.length) return listScored(filter, input, input.skills, now);
 
   const skip = (input.page - 1) * input.limit;
-  const sort = SORTS[input.sort === "bestMatch" || !input.sort ? "newest" : input.sort];
+  const sortKey = input.sort === "bestMatch" || !input.sort ? "closingSoon" : input.sort;
 
   const [rows, total] = await Promise.all([
-    TorModel.find(filter).sort(sort).skip(skip).limit(input.limit).lean(),
+    TorModel.aggregate<TorLean>([
+      { $match: filter },
+      ...sortStages(sortKey, now),
+      { $skip: skip },
+      { $limit: input.limit },
+    ]),
     TorModel.countDocuments(filter),
   ]);
 
@@ -169,6 +210,18 @@ export async function listTors(input: ListInput) {
 
 type ScoredRow = TorLean & { fitScore: number | null; matchedSkillCount: number };
 
+/** $sort, plus the computed keys `closingSoon` needs — removed again after. */
+function sortStages(sort: TorSort, now: Date): PipelineStage.FacetPipelineStage[] {
+  if (sort === "closingSoon") {
+    return [
+      ...(closingSoonStages(now) as PipelineStage.AddFields[]),
+      { $sort: { ...CLOSING_SOON_SORT } },
+      { $unset: CLOSING_SOON_FIELDS },
+    ];
+  }
+  return [{ $sort: SORTS[sort] }];
+}
+
 /**
  * The list, scored against the reader's skills.
  *
@@ -179,7 +232,7 @@ type ScoredRow = TorLean & { fitScore: number | null; matchedSkillCount: number 
  * fitScore = share of the TOR's required skills the reader has, 0–100. A TOR
  * with no tagged skills scores null — "we can't tell", not "no fit".
  */
-async function listScored(filter: QueryFilter<Tor>, input: ListInput, skills: string[]) {
+async function listScored(filter: QueryFilter<Tor>, input: ListInput, skills: string[], now: Date) {
   const skip = (input.page - 1) * input.limit;
 
   const slugs = { $ifNull: ["$requiredSkills.slug", []] };
@@ -216,7 +269,7 @@ async function listScored(filter: QueryFilter<Tor>, input: ListInput, skills: st
     ...bands,
     {
       $facet: {
-        items: [{ $sort: SORTS[input.sort ?? "newest"] }, { $skip: skip }, { $limit: input.limit }],
+        items: [...sortStages(input.sort ?? "closingSoon", now), { $skip: skip }, { $limit: input.limit }],
         total: [{ $count: "n" }],
       },
     },
@@ -239,14 +292,14 @@ async function listScored(filter: QueryFilter<Tor>, input: ListInput, skills: st
 
 export async function getTor(id: string) {
   if (!isValidObjectId(id)) return null;
-  const tor = await TorModel.findOne({ _id: id, ...(await publicScope()) }).lean();
+  const tor = await TorModel.findOne({ _id: id, ...publicScope() }).lean();
   return tor ? serialize(tor as TorLean) : null;
 }
 
 export async function getTorDetail(id: string) {
   if (!isValidObjectId(id)) return null;
 
-  const tor = await TorModel.findOne({ _id: id, ...(await publicScope()) }).lean();
+  const tor = await TorModel.findOne({ _id: id, ...publicScope() }).lean();
   if (!tor) return null;
 
   const [documents, torText] = await Promise.all([
@@ -289,7 +342,7 @@ export async function getTorGrade(id: string) {
 }
 
 export async function listAgencies() {
-  const scope = await publicScope();
+  const scope = publicScope();
   const rows = await TorModel.aggregate<{ _id: string; count: number }>([
     { $match: { ...scope, agency: { $nin: [null, ""] } } },
     { $group: { _id: "$agency", count: { $sum: 1 } } },
@@ -299,7 +352,7 @@ export async function listAgencies() {
 }
 
 export async function getStats() {
-  const scope = await publicScope();
+  const scope = publicScope();
   const facet = (field: string) =>
     TorModel.aggregate<{ _id: string | null; n: number }>([
       { $match: scope },
@@ -307,7 +360,15 @@ export async function getStats() {
       { $sort: { n: -1 } },
     ]);
 
-  const [total, byCategory, byWorkType, byMethod, byProjectStatus, withSignals, top] = await Promise.all([
+  const now = new Date();
+  const byBidding = Promise.all(
+    BIDDING_STATUSES.map(async (status) => ({
+      status,
+      count: await TorModel.countDocuments({ ...scope, $and: [biddingFilter(status, now) as QueryFilter<Tor>] }),
+    })),
+  );
+
+  const [total, byCategory, byWorkType, byMethod, byStage, byProvince, withSignals, top] = await Promise.all([
     TorModel.countDocuments(scope),
     facet("category"),
     // Multi-label, so a TOR counts once under each of its work types — the
@@ -319,7 +380,11 @@ export async function getStats() {
       { $sort: { n: -1 } },
     ]),
     facet("methodId"),
-    facet("projectStatus"),
+    TorModel.aggregate<{ _id: BiddingStage | null; n: number }>([
+      { $match: scope },
+      { $group: { _id: STAGE_EXPRESSION, n: { $sum: 1 } } },
+    ]),
+    facet("province"),
     TorModel.countDocuments({ ...scope, signalCount: { $gt: 0 } }),
     TorModel.findOne({ ...scope, budget: { $ne: null } }, { budget: 1 })
       .sort({ budget: -1 })
@@ -331,7 +396,9 @@ export async function getStats() {
     // Every listed TOR is software now (publicScope). Kept so existing
     // callers of the field don't break.
     software: total,
-    fiscalYear: await currentFiscalYear(),
+    fiscalYear: thaiFiscalYear(now),
+    // Open / upcoming / closed — the status toggle's counts.
+    byBidding: await byBidding,
     // A count of documents carrying observations. Not a count of "suspicious"
     // tenders — that framing is the thing FR-19 forbids.
     withSignals,
@@ -340,11 +407,17 @@ export async function getStats() {
     byCategory: byCategory.map((c) => ({ category: c._id, count: c.n })),
     byMethod: byMethod.map((m) => ({ method: m._id, count: m.n })),
     byWorkType: byWorkType.map((w) => ({ workType: w._id, count: w.n })),
-    // สถานะโครงการ as the portal writes it — the dropdown's options come from
-    // the data, never from a hardcoded list.
-    byProjectStatus: byProjectStatus
+    // สถานะโครงการ: the procurement stage, in e-GP's order. Only stages that
+    // occur, so the dropdown never offers an option that returns nothing.
+    byStage: BIDDING_STAGES.map((stage) => ({
+      stage,
+      count: byStage.find((s) => s._id === stage)?.n ?? 0,
+    })).filter((s) => s.count > 0),
+    // จังหวัด, most TORs first — the province filter's options. A row with no
+    // province recorded is left out of the options, not filed as "unknown".
+    byProvince: byProvince
       .filter((p) => p._id)
-      .map((p) => ({ status: p._id as string, count: p.n })),
+      .map((p) => ({ province: p._id as string, count: p.n })),
     // The budget slider's right edge.
     maxBudget: top?.budget ?? null,
   };

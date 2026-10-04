@@ -2,6 +2,7 @@ import { parseThaiDate, parseThb, thaiDigitsToArabic } from "../../thai/buddhist
 import type { CanonicalTor, RawProject } from "../types.ts";
 import { detectPhantomColumns, realignRow, type CkanRow } from "./client.ts";
 import { COL } from "./columns.ts";
+import { BMA_ID_FIELD } from "../bma/columns.ts";
 
 export const SOURCE_ID = "ckan-egp";
 
@@ -120,6 +121,9 @@ export function normalizeExtras(raw: RawProject) {
     contractNumber: strOrNull(row, COL.contractNumber),
     contractSignedAt: parseThaiDate(str(row, COL.contractSignedAt)),
     contractEndsAt: parseThaiDate(str(row, COL.contractEndsAt)),
+    // Only BMA-portal rows carry it; it is what the bidding check reads the
+    // ประกาศเชิญชวน through (modules/bidding).
+    bmaProjectId: strOrNull(row, BMA_ID_FIELD),
   };
 }
 

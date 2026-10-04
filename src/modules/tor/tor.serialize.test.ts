@@ -16,9 +16,9 @@ function tor(overrides: Record<string, unknown> = {}): TorLean {
     graderModel: "ollama:qwen2.5:7b",
     graderVersion: 1,
     ruleFindings: [
-      { code: "IDMISMATCH", fired: true, weight: 4, phase: "legitimacy", evidence: "กรมอื่น", checked: true, chunkIndex: 1 },
-      { code: "PENALTY", fired: true, weight: 3, phase: "fairness", evidence: "ค่าปรับวันละ", checked: true, chunkIndex: 4 },
-      { code: "HOURS", fired: false, weight: 3, phase: "fairness", evidence: "", checked: true, chunkIndex: 2 },
+      { code: "IDMISMATCH", fired: true, weight: 4, phase: "legitimacy", evidence: "กรมอื่น", checked: true },
+      { code: "PENALTY", fired: true, weight: 3, phase: "fairness", evidence: "ค่าปรับวันละ", checked: true },
+      { code: "HOURS", fired: false, weight: 3, phase: "fairness", evidence: "", checked: true },
     ],
     ...overrides,
   } as unknown as TorLean;
@@ -83,7 +83,7 @@ describe("serialize — the FR-19 gate", () => {
     const out = serialize(
       tor({
         ruleFindings: [
-          { code: "NOT_A_RULE", fired: true, weight: 9, phase: "fairness", evidence: "x", checked: true, chunkIndex: 0 },
+          { code: "NOT_A_RULE", fired: true, weight: 9, phase: "fairness", evidence: "x", checked: true },
         ],
       }),
     );
@@ -110,7 +110,7 @@ describe("serializeDetail — summary points", () => {
   test("emits summary points and no document text at all", () => {
     const out = serializeDetail(
       tor({
-        summaryBullets: [{ text: "กำหนดยื่นข้อเสนอภายใน 11 ม.ค. 2568", chunkIndex: 3 }],
+        summaryBullets: [{ text: "กำหนดยื่นข้อเสนอภายใน 11 ม.ค. 2568" }],
       }),
       [],
       text(),
@@ -125,7 +125,7 @@ describe("serializeDetail — summary points", () => {
 
   test("a point carries no citation until the summarizer names its file (feat/92)", () => {
     const out = serializeDetail(
-      tor({ summaryBullets: [{ text: "วางหลักประกันซองร้อยละ 5", chunkIndex: 3 }] }),
+      tor({ summaryBullets: [{ text: "วางหลักประกันซองร้อยละ 5" }] }),
       [],
       text(),
     );
@@ -146,9 +146,9 @@ describe("serializeDetail — summary points", () => {
     const out = serializeDetail(
       tor({
         summaryBullets: [
-          { text: "กำหนดส่งมอบภายใน 180 วัน", chunkIndex: 3 },
-          { text: "เงื่อนไขนี้ไม่เป็นธรรมต่อผู้รับจ้าง", chunkIndex: 3 },
-          { text: "This tender restricts competition.", chunkIndex: 3 },
+          { text: "กำหนดส่งมอบภายใน 180 วัน" },
+          { text: "เงื่อนไขนี้ไม่เป็นธรรมต่อผู้รับจ้าง" },
+          { text: "This tender restricts competition." },
         ],
       }),
       [],
@@ -207,7 +207,7 @@ describe("serialize — required skills", () => {
   test("emits slug and quote, not the tagger's bookkeeping", () => {
     const out = serialize(
       tor({
-        requiredSkills: [{ slug: "react", source: "keyword", evidence: "ใช้ React", chunkIndex: 2 }],
+        requiredSkills: [{ slug: "react", source: "keyword", evidence: "ใช้ React" }],
         skillTaggerVersion: 1,
       }),
     ) as Record<string, unknown>;
@@ -254,12 +254,12 @@ describe("serializeDetail — extracted PDF links", () => {
 
   test("a PDF still on disk is served by our own route", () => {
     const t = tor();
-    const [doc] = serializeDetail(t, [pdf("./data/extracted/1/tor.pdf")], []).documents;
+    const [doc] = serializeDetail(t, [pdf("./data/extracted/1/tor.pdf")], null).documents;
     expect(doc!.url).toBe(`/api/tors/${String(t._id)}/documents/${doc!.id}/file`);
   });
 
   test("once extraction has deleted it, the row links to the e-GP bundle", () => {
-    const [doc] = serializeDetail(tor(), [pdf(null)], []).documents;
+    const [doc] = serializeDetail(tor(), [pdf(null)], null).documents;
     expect(doc!.url).toBe(EGP_ZIP);
   });
 });

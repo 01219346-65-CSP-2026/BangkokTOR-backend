@@ -2,6 +2,8 @@ import { WORK_TYPES, type WorkTypeId } from "../../lib/classify/workType.ts";
 import { SKILL_VOCABULARY } from "../techstack/techstack.vocabulary.ts";
 import { TOR_CATEGORIES, TOR_METHODS, TOR_SORTS } from "./tor.model.ts";
 import { FIT_BANDS, type FitBand, type ListInput } from "./tor.service.ts";
+import { BIDDING_STATUSES, type BiddingStatus } from "./tor.bidding.ts";
+import { BIDDING_STAGES, type BiddingStage } from "../../lib/sources/egp/procurement.ts";
 
 type TorCategory = (typeof TOR_CATEGORIES)[number];
 type TorMethod = (typeof TOR_METHODS)[number];
@@ -28,7 +30,7 @@ function method(value: unknown): TorMethod | undefined {
     : undefined;
 }
 
-/** An unrecognised sort falls back to the service's default (newest) rather
+/** An unrecognised sort falls back to the service's default (closingSoon) rather
  *  than erroring — same reasoning as an unknown category. */
 function sort(value: unknown): TorSort | undefined {
   return typeof value === "string" && (TOR_SORTS as readonly string[]).includes(value)
@@ -46,12 +48,11 @@ function date(value: unknown): Date | undefined {
 
 const MAX_LIMIT = 100;
 
-/** Free text by design — the values are whatever the portal ships — so only
- *  its shape is checked. Mongo gets it as an exact-match string, never a regex. */
-function projectStatus(value: unknown): string | undefined {
-  if (typeof value !== "string") return undefined;
-  const trimmed = value.trim();
-  return trimmed && trimmed.length <= 100 ? trimmed : undefined;
+/** The procurement stage. Unknown values are dropped like an unknown category. */
+function stage(value: unknown): BiddingStage | undefined {
+  return typeof value === "string" && (BIDDING_STAGES as readonly string[]).includes(value)
+    ? (value as BiddingStage)
+    : undefined;
 }
 
 const SKILL_SLUGS = new Set<string>(SKILL_VOCABULARY.map((s) => s.slug));
@@ -71,6 +72,14 @@ const isFitBand = (v: string): v is FitBand => (FIT_BANDS as readonly string[]).
  *  unknown category is — a stale client must not turn into a 400. */
 function skills(value: unknown): string[] | undefined {
   const out = csv(value, isSkill, MAX_SKILLS);
+  return out.length > 0 ? out : undefined;
+}
+
+const isBidding = (v: string): v is BiddingStatus => (BIDDING_STATUSES as readonly string[]).includes(v);
+
+/** "open,upcoming". Unknown values are dropped; nothing left → the default. */
+function bidding(value: unknown): BiddingStatus[] | undefined {
+  const out = csv(value, isBidding, BIDDING_STATUSES.length);
   return out.length > 0 ? out : undefined;
 }
 
@@ -97,7 +106,7 @@ export function parseListQuery(query: Record<string, unknown>): ListInput {
     category: category(query.category),
     method: method(query.method),
     province: typeof query.province === "string" ? query.province : undefined,
-    projectStatus: projectStatus(query.projectStatus),
+    stage: stage(query.stage),
     workType: workType(query.workType),
     minBudget: num(query.minBudget),
     maxBudget: num(query.maxBudget),
@@ -106,6 +115,7 @@ export function parseListQuery(query: Record<string, unknown>): ListInput {
     sort: sort(query.sort),
     skills: skills(query.skills),
     fit: fitBands(query.fit),
+    bidding: bidding(query.bidding),
     page,
     limit,
   };

@@ -5,6 +5,8 @@ import { ckanSource, discover, resolveDataset, SOURCE_ID } from "../../lib/sourc
 import { BULK_CODE } from "../../lib/sources/govspending/catalog.ts";
 import { bulkVersion, headBulk } from "../../lib/sources/govspending/bulk.ts";
 import { discoverBulk, ensureBulkFile, resolveBulk } from "../../lib/sources/govspending/index.ts";
+import { discoverBma } from "../../lib/sources/bma/discover.ts";
+import { checkBidding, refreshBidding } from "../bidding/bidding.service.ts";
 import { logLine, type FetchOutcome } from "../../lib/sources/outcome.ts";
 import type { RawProject } from "../../lib/sources/types.ts";
 import { TorModel } from "../tor/tor.model.ts";
@@ -14,6 +16,10 @@ import { QueueModel, type QueueDoc } from "./queue.model.ts";
 import { RunModel } from "./run.model.ts";
 import { classifyRaw, isSoftwareCandidate, scopeOf, type Classified } from "./scope.ts";
 import { WatermarkModel } from "./watermark.model.ts";
+import type { CaptureInput } from "./ingest.validation.ts";
+import { egpListingUrl } from "../../lib/sources/ckan/normalize.ts";
+import { procurementFields } from "../../lib/sources/egp/procurement.ts";
+import { COL } from "../../lib/sources/ckan/columns.ts";
 
 // Services take plain arguments and return plain data (§6) — that is what lets
 // a worker or a scheduler call them without an HTTP request in sight.
@@ -21,22 +27,56 @@ import { WatermarkModel } from "./watermark.model.ts";
 export type DiscoverOptions = {
   limit?: number;
   resume?: boolean;
+  /** BMA audit mode: re-detail held projects too, and use the loosest title bar. */
+  full?: boolean;
+  /** BMA: override env.bmaLookbackDays for this run. */
+  lookbackDays?: number;
+  /** BMA: resume the list scan from this page. */
+  startPage?: number;
+  /** Every row dropped by scope, with why — for the miss report (src/discover.ts). */
+  onRejected?: (row: RejectedRow) => void;
 };
+
+export type RejectedRow = {
+  projectId: string;
+  title: string;
+  reason: "not-software";
+  score: number;
+  signals: string;
+  method: string | null;
+  contractType: string | null;
+};
+
+function rejected(c: Classified, reason: RejectedRow["reason"]): RejectedRow {
+  return {
+    projectId: c.canonical.projectId,
+    title: c.canonical.projectName,
+    reason,
+    score: c.classification.softwareScore,
+    signals: c.classification.softwareSignals.map((s) => `${s.rule}${s.weight > 0 ? "+" : ""}${s.weight}`).join(" "),
+    method: c.classification.methodId,
+    contractType: c.classification.contractType,
+  };
+}
 
 // Stage ①: read the newest fiscal year, upsert one queue row per SOFTWARE
 // project. Everything else is counted and dropped here — see scope.ts.
 //
-// Two feeds of the same national e-GP records (env.egpFeed):
-//   govspending — DGA's bulk export. Carries the CURRENT fiscal year. Default.
+// Three feeds of e-GP projects (env.egpFeed; the default "all" reads
+// govspending then bma in one run):
+//   bma         — the BMA portal, newest first. The only feed that lists a
+//                 project before it has a contract, i.e. while it can be bid
+//                 on. Bangkok agencies only.
+//   govspending — DGA's bulk export. Current fiscal year, contracted projects.
 //   ckan        — data.go.th's datastore. About a year behind; kept for older years.
-// Both yield rows keyed by CKAN column names, so everything after this point is
+// All yield rows keyed by CKAN column names, so everything after this point is
 // feed-agnostic. Records keep sourceId "ckan-egp" either way: it names the e-GP
 // project identity (same ids, same document chain), not the feed.
 export async function runDiscovery(options: DiscoverOptions = {}) {
   assertIngestConfig();
 
   const run = await RunModel.create({ sourceId: SOURCE_ID, kind: "discover" });
-  const counts = { scanned: 0, enqueued: 0, skipped: 0, notSoftware: 0, refreshed: 0 };
+  const counts = { scanned: 0, enqueued: 0, skipped: 0, notSoftware: 0, notBiddable: 0, refreshed: 0 };
   const saveCounts = (extra: Record<string, unknown> = {}) =>
     RunModel.updateOne(
       { _id: run._id },
@@ -48,48 +88,47 @@ export async function runDiscovery(options: DiscoverOptions = {}) {
           "counts.skipped": counts.skipped,
           "counts.notSoftware": counts.notSoftware,
           "counts.refreshed": counts.refreshed,
+          "counts.notBiddable": counts.notBiddable,
         },
       },
     );
 
+  // "all" reads the national export first — fast, and a no-op when the
+  // published file has not changed — then the slow BMA portal for open tenders.
+  const feedNames: Array<"ckan" | "govspending" | "bma"> =
+    env.egpFeed === "all" ? ["govspending", "bma"] : [env.egpFeed];
+
   try {
-    const watermark = await loadWatermark();
-    const feed = env.egpFeed === "ckan" ? await openCkanFeed(watermark, options) : await openBulkFeed(watermark, options);
-
-    if (feed.unchanged) {
-      await saveCounts({ status: "finished", finishedAt: new Date(), error: null });
-      return { runId: String(run._id), ...counts, fiscalYear: feed.fiscalYear, unchanged: true };
-    }
-
     let stoppedEarly = false;
-    for await (const raw of feed.stream) {
-      counts.scanned++;
+    for (const name of feedNames) {
+      if (stoppedEarly) break;
+      const watermark = await loadWatermark();
+      const feed =
+        name === "bma"
+          ? await openBmaFeed(String(run._id), options)
+          : name === "ckan"
+            ? await openCkanFeed(watermark, options)
+            : await openBulkFeed(watermark, options);
 
-      // The cheap check first: it rejects ~99% of rows without normalizing them.
-      const classified = isSoftwareCandidate(raw) ? classifyRaw(raw) : null;
-      if (!classified || scopeOf(classified, feed.fiscalYear) !== "in-scope") {
-        counts.notSoftware++;
-      } else if (await refresh(raw, classified)) {
-        counts.refreshed++;
-      } else if ((await enqueue(raw, String(run._id))) === "enqueued") {
-        counts.enqueued++;
-      } else {
-        // Already queued — most often a second contract row of the same project.
-        counts.skipped++;
+      if (feed.unchanged) {
+        console.log(`${name}: unchanged since the last full scan — skipped`);
+        continue;
       }
-
-      if (options.limit && counts.enqueued >= options.limit) {
-        stoppedEarly = true;
-        break;
-      }
-      if (counts.scanned % 5_000 === 0) await saveCounts();
+      stoppedEarly = await drain(feed);
+      // A limited run read part of the source; it is not a full scan, and the
+      // resume point must survive for the next run.
+      if (!stoppedEarly) await feed.completed();
     }
 
-    await saveCounts({ status: "finished", finishedAt: new Date() });
+    await saveCounts({ status: "finished", finishedAt: new Date(), error: null });
 
-    // A limited run read part of the year; it is not a full scan, and the
-    // resume point must survive for the next run.
-    if (!stoppedEarly) await feed.completed();
+    // Stages move and re-announcements change dates, so every TOR still
+    // short of an award is re-checked on each run (NFR-02).
+    if (feedNames.includes("bma")) {
+      const bidding = await refreshBidding();
+      await RunModel.updateOne({ _id: run._id }, { $set: { "counts.biddingChecked": bidding.checked, "counts.open": bidding.open } });
+      return { runId: String(run._id), feeds: feedNames, ...counts, bidding };
+    }
   } catch (error) {
     await RunModel.updateOne(
       { _id: run._id },
@@ -103,14 +142,52 @@ export async function runDiscovery(options: DiscoverOptions = {}) {
     throw error;
   }
 
-  return { runId: String(run._id), ...counts };
+  return { runId: String(run._id), feeds: feedNames, ...counts };
+
+  /** Classify and enqueue one feed's rows. True when `limit` stopped it early. */
+  async function drain(feed: Feed): Promise<boolean> {
+    for await (const raw of feed.stream) {
+      counts.scanned++;
+
+      // The cheap check first: it rejects ~99% of rows without normalizing them.
+      // BMA rows are few and already title-filtered: classify them all, so
+      // every rejection reaches the miss report with its score.
+      const classified = feed.classifyAll || isSoftwareCandidate(raw) ? classifyRaw(raw) : null;
+      if (!classified || scopeOf(classified, feed.fiscalYear) !== "in-scope") {
+        counts.notSoftware++;
+        // Only rows that were classified are worth reporting; the cheap
+        // pre-check rejects millions on the national feeds.
+        if (classified) options.onRejected?.(rejected(classified, "not-software"));
+      } else if (await refresh(raw, classified)) {
+        counts.refreshed++;
+      } else if ((await enqueue(raw, String(run._id))) === "enqueued") {
+        counts.enqueued++;
+      } else {
+        // Already queued — most often a second contract row of the same project.
+        counts.skipped++;
+      }
+
+      if (options.limit && counts.enqueued >= options.limit) return true;
+      // A BMA run yields a few hundred rows over many slow minutes; without
+      // frequent saves its run record reads zero until the very end.
+      if (counts.scanned % (feed.progressEvery ?? 5_000) === 0) await saveCounts();
+    }
+    await saveCounts();
+    return false;
+  }
 }
 
 type WatermarkLean = Awaited<ReturnType<typeof loadWatermark>>;
 const loadWatermark = () => WatermarkModel.findOne({ sourceId: SOURCE_ID }).lean();
 
 type Feed = {
-  fiscalYear: number;
+  /** The year the feed was read for. Undefined when rows carry no year (bma). */
+  fiscalYear?: number;
+  /** Classify every row, skipping the cheap pre-check: rows are few and
+   *  already title-filtered, so every rejection reaches the miss report. */
+  classifyAll?: boolean;
+  /** Save run counts every N rows. Default 5,000 (the national bulk feeds). */
+  progressEvery?: number;
   stream: AsyncIterable<RawProject>;
   /** Called once the whole year has been read. */
   completed: () => Promise<void>;
@@ -175,10 +252,59 @@ async function openBulkFeed(watermark: WatermarkLean, options: DiscoverOptions):
   };
 }
 
+/**
+ * The BMA portal, newest first. Every run reads the whole window — list pages
+ * are the cheap part — and details only projects not seen before, so there is
+ * no resume point to keep.
+ *
+ * The window is the site's own: from 1 October of the previous Thai fiscal
+ * year (tor.service.ts publicScope shows this FY and last), unless
+ * BMA_LOOKBACK_DAYS or --days says otherwise. Every software TOR in Bangkok is
+ * kept — open, closed, awarded, and direct awards alike; tor.bidding.ts sorts
+ * them into open / upcoming / closed.
+ */
+export function daysSincePreviousFiscalYear(now: Date = new Date()): number {
+  const bkk = new Date(now.getTime() + 7 * 3_600_000);
+  const fyStartYear = bkk.getUTCMonth() >= 9 ? bkk.getUTCFullYear() : bkk.getUTCFullYear() - 1;
+  const previousStart = Date.UTC(fyStartYear - 1, 9, 1);
+  return Math.ceil((now.getTime() - previousStart) / 86_400_000);
+}
+
+async function openBmaFeed(runId: string, options: DiscoverOptions): Promise<Feed> {
+  // Held already → not re-detailed. Queued but not yet processed counts too.
+  const [tors, queued] = await Promise.all([
+    TorModel.find({ bmaProjectId: { $ne: null } }, { projectId: 1 }).lean(),
+    QueueModel.find({ "payload.bmaProjectId": { $exists: true } }, { projectId: 1 }).lean(),
+  ]);
+  const held = new Set([...tors, ...queued].map((r) => r.projectId));
+
+  return {
+    classifyAll: true,
+    // Each row costs seconds of a slow server, so a save per row is noise.
+    progressEvery: 1,
+    stream: discoverBma({
+      lookbackDays: options.lookbackDays ?? env.bmaLookbackDays ?? daysSincePreviousFiscalYear(),
+      maxPages: env.bmaMaxPages,
+      // The audit re-reads everything, at the loosest bar.
+      isHeld: options.full ? undefined : (projectNumber) => held.has(projectNumber),
+      minTitleScore: options.full ? 1 : undefined,
+      startPage: options.startPage,
+      onPage: ({ page, rows, candidates }) =>
+        console.log(`bma page ${page}: ${rows} projects, ${candidates} new software candidates`),
+      onError: (projectId, error) =>
+        recordError({ runId, projectId, kind: "bma-detail-failed", message: String(error) }),
+    }),
+    // Its own field, not `feed`: one watermark row is shared with the
+    // national export, whose resume check reads `feed`. A BMA scan has no
+    // cursor to keep — only when it last finished.
+    completed: () => setWatermark({ bmaLastFullScanAt: new Date() }),
+  };
+}
+
 /** data.go.th's CKAN datastore: every resource of the newest package, year-filtered server-side. */
 async function openCkanFeed(watermark: WatermarkLean, options: DiscoverOptions): Promise<Feed> {
   const dataset = await resolveDataset();
-  const resume = options.resume !== false && watermark?.feed !== "govspending";
+  const resume = options.resume !== false && watermark?.feed !== "govspending" && watermark?.feed !== "bma";
 
   return {
     fiscalYear: dataset.fiscalYear,
@@ -235,6 +361,55 @@ async function enqueue(raw: RawProject, runId: string): Promise<"enqueued" | "sk
   return res.upsertedCount > 0 ? "enqueued" : "skipped";
 }
 
+/**
+ * Project ids captured from e-GP's own search, in a person's browser, by the
+ * capture extension (tools/egp-capture). This is how open tenders from every
+ * agency get in: the search is Turnstile-gated and is never called from here;
+ * a human runs it, and only the ids come to us.
+ *
+ * Fast on purpose (NFR-01): no e-GP call in the request. New ids are queued
+ * with `egpCapture` set, and processRow fills them in from e-GP's per-project
+ * endpoints. Ids already held are not re-queued — their stage check is reset
+ * so the next refreshBidding re-reads them, since a captured invitation means
+ * the project has moved.
+ */
+export async function captureProjects(input: CaptureInput) {
+  const run = await RunModel.create({ sourceId: SOURCE_ID, kind: "capture" });
+  const ids = input.projects.map((p) => p.projectId);
+
+  const held = await TorModel.find({ sourceId: SOURCE_ID, projectId: { $in: ids } }, { projectId: 1, biddingStage: 1 }).lean();
+  const heldIds = new Set(held.map((t) => t.projectId));
+
+  // Held, but never stage-checked (the national history) or not yet awarded:
+  // put it in front of the next refreshBidding. A null biddingStage is one of
+  // LIVE_STAGES, so clearing stageCheckedAt alone is not what does it.
+  await TorModel.updateMany(
+    { sourceId: SOURCE_ID, projectId: { $in: [...heldIds] } },
+    { $set: { stageCheckedAt: null, trackBidding: true } },
+  );
+
+  let enqueued = 0;
+  for (const p of input.projects) {
+    if (heldIds.has(p.projectId)) continue;
+    const outcome = await enqueue(
+      {
+        projectId: p.projectId,
+        sourceUrl: egpListingUrl(p.projectId),
+        fields: { egpCapture: true, captureSource: input.source, title: p.title, agency: p.agency, province: p.province },
+      },
+      String(run._id),
+    );
+    if (outcome === "enqueued") enqueued++;
+  }
+
+  const counts = { received: input.projects.length, enqueued, alreadyHeld: heldIds.size, invalid: input.invalid };
+  await RunModel.updateOne(
+    { _id: run._id },
+    { $set: { status: "finished", finishedAt: new Date(), "counts.scanned": counts.received, "counts.enqueued": enqueued, "counts.refreshed": heldIds.size } },
+  );
+  return { runId: String(run._id), ...counts, alreadyQueued: counts.received - enqueued - heldIds.size };
+}
+
 // Stage ②–③: one claimed row. Normalize into `tors`, then try for documents.
 //
 // The TOR is saved BEFORE the document fetch, deliberately: normalization is
@@ -250,6 +425,28 @@ export async function processRow(
     header: row.header ?? [],
   };
 
+  // A captured id (captureProjects) carries no record yet: read it from e-GP's
+  // per-project endpoints, keyed like every other feed's row.
+  const captured = raw.fields.egpCapture === true;
+  if (captured) {
+    const read = await procurementFields(row.projectId, { province: raw.fields.province as string | undefined });
+    if (!read) {
+      await recordError({ sourceId: SOURCE_ID, projectId: row.projectId, kind: "capture-not-on-egp", message: "e-GP has no such project" });
+      return { ok: true };
+    }
+    if (read.unknownMethod) {
+      await recordError({
+        sourceId: SOURCE_ID,
+        projectId: row.projectId,
+        kind: "capture-unknown-method",
+        message: `e-GP methodId "${read.unknownMethod}" is not mapped (lib/sources/egp/procurement.ts METHOD_BY_ID)`,
+      });
+    }
+    // e-GP's title wins; the search row's is the fallback.
+    read.fields[COL.title] ??= raw.fields.title;
+    raw.fields = read.fields;
+  }
+
   // Classify before the write, so every TOR carries it on arrival.
   const classified = classifyRaw(raw);
   const { canonical, extras, classification } = classified;
@@ -259,9 +456,11 @@ export async function processRow(
   // claimed. Finish it without writing a TOR the website would never show.
   if (scopeOf(classified) !== "in-scope") return { ok: true };
 
+  // Seen while biddable (BMA or a capture) → keep its stage and deadline current.
+  const trackBidding = captured || Boolean(extras.bmaProjectId);
   const tor = await TorModel.findOneAndUpdate(
     { sourceId: canonical.sourceId, projectId: canonical.projectId },
-    { $set: { ...canonical, ...extras, ...classification } },
+    { $set: { ...canonical, ...extras, ...classification, ...(trackBidding ? { trackBidding: true } : {}) } },
     { upsert: true, returnDocument: "after", setDefaultsOnInsert: true },
   );
 
@@ -279,6 +478,22 @@ export async function processRow(
       message: "findOneAndUpdate with upsert returned no document",
     });
     return { ok: false, reason: "tor-upsert-failed" };
+  }
+
+  // BMA rows and captured rows can be bid on: find out where they stand and
+  // when bids close. A failure here costs the deadline, not the record — it is
+  // recorded and the daily refresh tries again.
+  if (tor.bmaProjectId || tor.trackBidding) {
+    try {
+      await checkBidding(tor);
+    } catch (error) {
+      await recordError({
+        sourceId: SOURCE_ID,
+        projectId: row.projectId,
+        kind: "bidding-check-failed",
+        message: String(error),
+      });
+    }
   }
 
   let docs;

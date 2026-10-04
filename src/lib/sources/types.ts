@@ -41,7 +41,8 @@ export type RawDocument = {
 
 // The normalized shape, typed strictly because it reaches Mongo. Money is THB
 // integers, dates are CE — both converted at the adapter edge (§4.5).
-// No deadline field: neither source supplies one, FR-13 is still open, don't invent it.
+// No deadline here: no feed row carries one. It is read later from the
+// ประกาศเชิญชวน PDF (modules/bidding), and stays null when it cannot be.
 export type CanonicalTor = {
   sourceId: string;
   projectId: string;

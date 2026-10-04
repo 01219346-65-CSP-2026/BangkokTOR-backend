@@ -17,7 +17,7 @@ import { DocumentModel } from "./modules/ingest/document.model.ts";
 //   bun run backfill-pdfs            # report only
 //   bun run backfill-pdfs --apply    # write
 //
-// Only re-expands the zip already on disk. It does NOT touch chunks, grades or
+// Only re-expands the zip already on disk. It does NOT touch extracted text, grades or
 // TOR status — re-running extraction would, and would drop graded TORs back
 // to extraction_pending. The PDFs are not re-read, so their pages and text
 // layer stay null until a real extraction pass covers them.
