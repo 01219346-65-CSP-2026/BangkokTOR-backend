@@ -36,6 +36,16 @@ describe("parseProfilePut", () => {
     expect(status(() => parseProfilePut({ ...valid, notify: { on_match: true } }))).toBe(400);
   });
 
+  test("work_types: optional list of known work types, deduped", () => {
+    expect("work_types" in parseProfilePut(valid)).toBe(false);
+    expect(
+      parseProfilePut({ ...valid, work_types: ["aiData", "development", "aiData"] }).work_types,
+    ).toEqual(["aiData", "development"]);
+    expect(parseProfilePut({ ...valid, work_types: [] }).work_types).toEqual([]);
+    expect(status(() => parseProfilePut({ ...valid, work_types: ["bogus"] }))).toBe(400);
+    expect(status(() => parseProfilePut({ ...valid, work_types: "aiData" }))).toBe(400);
+  });
+
   test("budget_max null means no maximum", () => {
     expect(parseProfilePut({ ...valid, budget_max: null }).budget_max).toBeNull();
   });

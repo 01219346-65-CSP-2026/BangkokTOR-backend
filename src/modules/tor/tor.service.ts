@@ -18,6 +18,7 @@ import {
   type BiddingStatus,
 } from "./tor.bidding.ts";
 import { BIDDING_STAGES, type BiddingStage } from "../../lib/sources/egp/procurement.ts";
+import { buildPreviewFromRows, type PreviewInput, type PreviewRow } from "./tor.preview.ts";
 
 import {
   TOR_CATEGORIES,
@@ -288,6 +289,39 @@ async function listScored(filter: QueryFilter<Tor>, input: ListInput, skills: st
     total,
     pages: Math.ceil(total / input.limit),
   };
+}
+
+/**
+ * The /skills live preview over every open TOR — see tor.preview.ts. "Open"
+ * only, not the list's default open + upcoming: the preview promises TORs a
+ * team can bid on today.
+ */
+export async function previewForProfile(input: PreviewInput) {
+  const now = new Date();
+  const filter: QueryFilter<Tor> = publicScope(now);
+  const open = biddingFilterFor(["open"], now);
+  if (open) filter.$and = [open as QueryFilter<Tor>];
+
+  const docs = await TorModel.find(filter, {
+    projectName: 1,
+    agency: 1,
+    budget: 1,
+    bidClosesAt: 1,
+    "requiredSkills.slug": 1,
+  })
+    .lean()
+    .exec();
+
+  const rows: PreviewRow[] = docs.map((d) => ({
+    id: String(d._id),
+    title: d.projectName,
+    agency: d.agency || null,
+    budget: d.budget ?? null,
+    bidClosesAt: d.bidClosesAt ?? null,
+    skills: (d.requiredSkills ?? []).map((s) => s.slug).filter((s): s is string => !!s),
+  }));
+
+  return buildPreviewFromRows(rows, input);
 }
 
 export async function getTor(id: string) {

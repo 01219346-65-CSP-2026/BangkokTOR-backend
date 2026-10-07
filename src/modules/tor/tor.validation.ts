@@ -2,6 +2,7 @@ import { WORK_TYPES, type WorkTypeId } from "../../lib/classify/workType.ts";
 import { SKILL_VOCABULARY } from "../techstack/techstack.vocabulary.ts";
 import { TOR_CATEGORIES, TOR_METHODS, TOR_SORTS } from "./tor.model.ts";
 import { FIT_BANDS, type FitBand, type ListInput } from "./tor.service.ts";
+import type { PreviewInput } from "./tor.preview.ts";
 import { BIDDING_STATUSES, type BiddingStatus } from "./tor.bidding.ts";
 import { BIDDING_STAGES, type BiddingStage } from "../../lib/sources/egp/procurement.ts";
 
@@ -118,5 +119,16 @@ export function parseListQuery(query: Record<string, unknown>): ListInput {
     bidding: bidding(query.bidding),
     page,
     limit,
+  };
+}
+
+/** GET /api/tors/preview. A missing or odd seed still gets a stable pick. */
+export function parsePreviewQuery(query: Record<string, unknown>): PreviewInput {
+  const seed = typeof query.seed === "string" ? query.seed.slice(0, 32) : "";
+  return {
+    skills: skills(query.skills) ?? [],
+    minBudget: num(query.minBudget),
+    maxBudget: num(query.maxBudget),
+    seed,
   };
 }
