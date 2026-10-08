@@ -1,6 +1,9 @@
 import { env } from "../../config/env.ts";
-import type { FileSpan } from "../extract/fulltext.ts";
+import { fileAt, type FileSpan } from "../extract/fulltext.ts";
+import { isVerbatim, locateQuote } from "./types.ts";
 import type { GradeInput, Grader, RuleFinding, RuleSpec, Summarizer } from "./types.ts";
+
+const MAX_EVIDENCE_CHARS = 200;
 
 // ============================================================================
 // Google Vertex AI (Gemini) — YOU write this file (feat/91). See LEARNING.md.
@@ -63,12 +66,74 @@ export type GeminiRequest = {
  * text is not valid JSON. Never put the URL in an error — it contains the key.
  */
 export async function callGemini<T = unknown>(req: GeminiRequest): Promise<T> {
-  throw new Error("TODO(feat/91): callGemini — see LEARNING.md step 4");
+  //throw new Error("TODO(feat/91): callGemini — see LEARNING.md step 4");
+  assertVertexConfig();
+
+  const apiKey = env.vertexApiKey;
+  const model = env.vertexModel;
+
+  const response = await fetch(
+    `${VERTEX_BASE}/${model}:generateContent?key=${encodeURIComponent(apiKey)}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal: req.signal,
+      body: JSON.stringify({
+        contents: [{ role: "user", parts: [{ text: req.prompt }] }],
+        generationConfig: {
+          temperature: 0,
+          responseMimeType: "application/json",
+          responseSchema: req.schema,
+        },
+      }),
+    },
+  )
+
+  if (!response.ok) {
+    // Don't include the request URL: it contains the API key.
+    const detail = await response.text().catch(() => "");
+    throw new Error(
+      `Vertex AI request failed (${response.status})${detail ? `: ${detail}` : ""}`,
+    );
+  }
+
+  const data = await response.json() as {
+    candidates?: Array<{
+      content?: { parts?: Array<{ text?: string }> };
+      finishReason?: string;
+    }>;
+    promptFeedback?: { blockReason?: string };
+  };
+
+  if (data.promptFeedback?.blockReason) {
+    throw new Error(`Gemini prompt was blocked: ${data.promptFeedback.blockReason}`);
+  }
+
+  const candidate = data.candidates?.[0];
+  if (!candidate) {
+    throw new Error("Gemini returned no candidate");
+  }
+  if (candidate.finishReason !== "STOP") {
+    throw new Error(`Gemini finished unexpectedly: ${candidate.finishReason ?? "unknown"}`);
+  }
+
+  const text = candidate.content?.parts?.map(part => part.text ?? "").join("");
+  if (!text) {
+    throw new Error("Gemini returned no response text");
+  }
+
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new Error("Gemini response was not valid JSON");
+  }
 }
 
 /** Throw a clear error mentioning VERTEX_API_KEY when env.vertexApiKey is empty. */
 export function assertVertexConfig(): void {
-  throw new Error("TODO(feat/91): assertVertexConfig — see LEARNING.md step 4");
+  if (!env.vertexApiKey) {
+    throw new Error("VERTEX_API_KEY is not set");
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -83,7 +148,24 @@ export function assertVertexConfig(): void {
  * "STRING", "BOOLEAN".
  */
 export function gradeSchema(codes: string[]): Record<string, unknown> {
-  throw new Error("TODO(feat/91): gradeSchema — see LEARNING.md step 5");
+  return {
+    type: "OBJECT",
+    properties: {
+      findings: {
+        type: "ARRAY",
+        items: {
+          type: "OBJECT",
+          properties: {
+            code: { type: "STRING", enum: codes },
+            present: { type: "BOOLEAN" },
+            quote: { type: "STRING", maxLength: 200 },
+          },
+          required: ["code", "present", "quote"],
+        },
+      },
+    },
+    required: ["findings"],
+  };
 }
 
 /**
@@ -93,7 +175,26 @@ export function gradeSchema(codes: string[]): Record<string, unknown> {
  * words WORD-FOR-WORD and the MAX_EVIDENCE_CHARS limit; and the whole text.
  */
 export function buildGradePrompt(rules: RuleSpec[], text: string): string {
-  throw new Error("TODO(feat/91): buildGradePrompt — see LEARNING.md step 5");
+  const sections = rules.map((rule) => {
+    const unfairWhen = rule.unfairWhen ? `\nUnfair when: ${rule.unfairWhen}` : "";
+    const cues = rule.cues.length > 0 ? `\nCue words: ${rule.cues.join(", ")}` : "";
+    return `[${rule.code}]\nDefinition: ${rule.definition}${unfairWhen}${cues}`;
+  });
+
+  return [
+    "Read the entire document below and answer for every rule.",
+    "For each rule, return one object: { code, present, quote }.",
+    "The code must be exactly one of the rule codes in this prompt.",
+    "Set present to true only when the document contains a matching clause.",
+    "Set quote to a WORD-FOR-WORD excerpt from the document, at most " +
+      MAX_EVIDENCE_CHARS + " characters long.",
+    "Do not paraphrase. Do not invent text. If a rule is absent, use present=false and an empty quote.",
+    "",
+    ...sections,
+    "",
+    "Document:",
+    text,
+  ].join("\n");
 }
 
 /**
@@ -113,7 +214,55 @@ export function keepVerifiedFindings(
   text: string,
   files: FileSpan[],
 ): RuleFinding[] {
-  throw new Error("TODO(feat/91): keepVerifiedFindings — see LEARNING.md step 5");
+  if (!raw || typeof raw !== "object" || !("findings" in raw) || !Array.isArray(raw.findings)) {
+    return rules.map((rule) => ({
+      code: rule.code,
+      fired: false,
+      evidence: "",
+      checked: false,
+      filename: null,
+    }));
+  }
+
+  const findings = raw.findings as unknown[];
+
+  return rules.map((rule) => {
+    const item = findings.find((entry) => {
+      if (!entry || typeof entry !== "object" || !("code" in entry)) return false;
+      return entry.code === rule.code;
+    });
+
+    if (!item || typeof item !== "object") {
+      return { code: rule.code, fired: false, evidence: "", checked: false, filename: null };
+    }
+
+    const candidate = item as Record<string, unknown>;
+    const present = candidate.present;
+    const quote = typeof candidate.quote === "string" ? candidate.quote : "";
+
+    if (present !== true) {
+      return {
+        code: rule.code,
+        fired: false,
+        evidence: "",
+        checked: present === false,
+        filename: null,
+      };
+    }
+
+    if (!isVerbatim(quote, text)) {
+      return { code: rule.code, fired: false, evidence: "", checked: false, filename: null };
+    }
+
+    const offset = locateQuote(quote, text);
+    return {
+      code: rule.code,
+      fired: true,
+      evidence: quote,
+      checked: true,
+      filename: fileAt(files, offset),
+    };
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -127,7 +276,26 @@ export function keepVerifiedFindings(
  * Abort the call after env.aiTimeoutMs (AbortController + setTimeout).
  */
 export function createVertexGrader(): Grader {
-  throw new Error("TODO(feat/91): createVertexGrader — see LEARNING.md step 6");
+  return {
+    id: `vertex:${env.vertexModel}`,
+    async grade(input) {
+      if (input.rules.length === 0) return [];
+
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), env.aiTimeoutMs);
+
+      try {
+        const raw = await callGemini({
+          prompt: buildGradePrompt(input.rules, input.text),
+          schema: gradeSchema(input.rules.map((rule) => rule.code)),
+          signal: controller.signal,
+        });
+        return keepVerifiedFindings(raw, input.rules, input.text, input.files);
+      } finally {
+        clearTimeout(timeout);
+      }
+    },
+  };
 }
 
 // ---------------------------------------------------------------------------

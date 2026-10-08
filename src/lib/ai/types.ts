@@ -1,6 +1,8 @@
 // The grader port. Ollama implements it today; Vertex implements it later
 // without any caller changing — that swap is the whole reason this file exists.
 
+import type { FileSpan } from "../extract/fulltext";
+
 /** A rule as the model sees it. The definition is load-bearing: measured
  *  2026-09-08, asking qwen2.5:7b about a bare rule name scored 0/3, while the
  *  same question with an explicit definition scored 3/3. */
@@ -22,12 +24,14 @@ export type RuleFinding = {
   evidence: string;
   /** False when the rule was never asked — none of its cues appear in the text. */
   checked: boolean;
+  filename: string | null;
 };
 
 export type GradeInput = {
   rules: RuleSpec[];
   /** The TOR's full extracted text. */
   text: string;
+  files: FileSpan[];
 };
 
 export type Grader = {
@@ -104,5 +108,31 @@ export function isVerbatim(evidence: string, haystack: string): boolean {
  *     array to translate the position back.
  */
 export function locateQuote(quote: string, haystack: string): number {
-  throw new Error("TODO(feat/91): locateQuote — see LEARNING.md step 3");
+  const strip = (s: string) => s.replace(/\s+/g, "");
+
+  if (!quote.trim()) 
+    return -1;
+
+  // better optimized if enabled, but misses a non significant edge case.
+  /*const a = haystack.indexOf(quote);
+  if (a !== -1) 
+    return a;*/
+  
+  const strippedChars: string[] = [];
+  const originalIndexes: number[] = [];
+
+  for (let i = 0; i < haystack.length; i++) {
+    if (!/\s/.test(haystack.charAt(i))) {
+      strippedChars.push(haystack.charAt(i));
+      originalIndexes.push(i);
+    }
+  }
+
+  const strippedText = strippedChars.join("");
+  const strippedIndex = strippedText.indexOf(strip(quote));
+
+  if (strippedIndex === -1) return -1;
+  else {
+    return originalIndexes[strippedIndex] ?? -1;
+  }
 }

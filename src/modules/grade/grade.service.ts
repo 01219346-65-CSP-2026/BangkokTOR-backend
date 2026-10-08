@@ -78,6 +78,7 @@ function toFindings(raw: RuleFinding[], text: string): Finding[] {
       evidence: verified ? f.evidence : "",
       // A rule the router never sent anywhere was not evaluated.
       checked: f.checked,
+      filename: verified ? f.filename ?? null : null,
     };
   });
 }
@@ -103,22 +104,31 @@ export async function gradeTor(torId: Types.ObjectId | string): Promise<GradeOut
   }
 
   const text = storedText.fullText;
+  const files = storedText.files;
 
   const grader = createGrader();
   const findings: Finding[] = [...checkDeterministic(tor, text)];
 
   try {
-    const legitimacy = await grader.grade({ rules: aiRulesFor("legitimacy"), text });
+    const legitimacy = await grader.grade({
+      rules: aiRulesFor("legitimacy"),
+      text,
+      files,
+    });
     findings.push(...toFindings(legitimacy, text));
 
     // REPUTATION and anything else the rulebook marks not_checked: recorded as
     // unchecked so the scorer leaves it out of the denominator entirely.
     for (const rule of RULES.filter((r) => r.method === "not_checked")) {
-      findings.push({ code: rule.code, fired: false, evidence: "", checked: false });
+      findings.push({ code: rule.code, fired: false, evidence: "", checked: false, filename: null });
     }
 
     if (!skipFairness(findings.filter((f) => isLegitimacy(f.code)))) {
-      const fairness = await grader.grade({ rules: aiRulesFor("fairness"), text });
+      const fairness = await grader.grade({
+        rules: aiRulesFor("fairness"),
+        text,
+        files,
+      });
       findings.push(...toFindings(fairness, text));
     }
   } catch (error) {
@@ -171,6 +181,7 @@ export async function gradeTor(torId: Types.ObjectId | string): Promise<GradeOut
           phase: ruleByCode(f.code)?.phase ?? "fairness",
           evidence: f.evidence,
           checked: f.checked,
+          filename: f.filename ?? null,
         })),
         gradedAt: new Date(),
         graderVersion: GRADER_VERSION,
@@ -198,10 +209,15 @@ function isLegitimacy(code: string): boolean {
   return LEGITIMACY_RULES.some((r) => r.code === code);
 }
 
-/** TORs awaiting a grade or needing a newer grading version. */
+/** TORs awaiting a grade or needing a newer grading version. Only text-backed
+ * rows are eligible; TorTextModel is the source of truth for "this TOR has
+ * stored full text". */
 export async function findUngraded(limit = 20) {
+  const textTorIds = await TorTextModel.distinct("torId");
+
   return TorModel.find({
-    status: "extraction_pending",
+    _id: { $in: textTorIds },
+    status: { $in: ["extraction_pending", "graded"] },
     $or: [{ graderVersion: null }, { graderVersion: { $lt: GRADER_VERSION } }],
   })
     .select("_id projectId")
