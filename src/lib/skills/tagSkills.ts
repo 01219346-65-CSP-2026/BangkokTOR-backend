@@ -12,7 +12,7 @@ import { SKILL_VOCABULARY } from "../../modules/techstack/techstack.vocabulary.t
 export type SkillSlug = (typeof SKILL_VOCABULARY)[number]["slug"];
 
 /** Bump when aliases or matching change, so stale tags are findable. */
-export const SKILL_TAGGER_VERSION = 3;
+export const SKILL_TAGGER_VERSION = 4;
 
 /**
  * A plain string is matched case-insensitively. When it is ASCII it must also
