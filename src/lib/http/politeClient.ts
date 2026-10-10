@@ -143,9 +143,31 @@ const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 const hostChains = new Map<string, Promise<void>>();
 
 // host is procurement URL
+// ── Added 2026-10-03 (Claude): rate-limit handling ────────────────────────────
+// e-GP answered 429 "Rate limit exceeded" to a capture batch, and the old
+// retries (0.8 s, 1.6 s, 3.2 s) all landed inside its window, so projects
+// failed. A 429 now pauses the WHOLE host — every queued request to it waits —
+// and retries escalate over minutes, not seconds.
+
+/** Host → epoch ms before which no request to it is sent. */
+const cooldownUntil = new Map<string, number>();
+
+/** Slower standing pace for hosts that have rate-limited us. */
+function hostDelayMs(host: string, delayMs: number): number {
+  return host === "process5.gprocurement.go.th" ? Math.max(delayMs, env.egpDelayMs) : delayMs;
+}
+
+/** 30 s, 60 s, 120 s, 240 s… capped at 5 min, unless the server says. */
+function rateLimitWaitMs(attempt: number, response: Response): number {
+  return retryAfterMs(response) ?? Math.min(30_000 * 2 ** (attempt - 1), 300_000);
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 export function nextSlot(host: string, delayMs: number): Promise<void> {
   const previous = hostChains.get(host) ?? Promise.resolve();
-  const mine = previous.then(() => sleep(delayMs));
+  // (Claude) A cooldown is honoured here, inside the per-host chain, so
+  // requests already waiting their turn wait it out too.
+  const mine = previous.then(() => sleep(Math.max(delayMs, (cooldownUntil.get(host) ?? 0) - Date.now())));
   hostChains.set(host, mine.catch(() => {}))
   // console.log(hostChains.get(host));
   return mine
@@ -262,11 +284,13 @@ export async function politeFetch(
   init: RequestInit = {},
   options: PoliteOptions = {},
 ): Promise<Response> {
-  const delayMs = options.delayMs ?? env.httpDelayMs;
-  const timeoutMs = options.timeoutMs ?? env.httpTimeoutMs;
-  const maxAttempts = options.maxAttempts ?? env.httpMaxAttempts;
-
   const host = new URL(url).host;
+  const delayMs = hostDelayMs(host, options.delayMs ?? env.httpDelayMs);
+  const timeoutMs = options.timeoutMs ?? env.httpTimeoutMs;
+  // (Claude) A rate limit gets more patience than other failures.
+  const baseAttempts = options.maxAttempts ?? env.httpMaxAttempts;
+  let maxAttempts = baseAttempts;
+
   let lastError: UpstreamHttpError | NetworkError | undefined
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -299,6 +323,16 @@ export async function politeFetch(
 
     const body = await response.text().catch(() => "");
     lastError = new UpstreamHttpError(response.status, url, body);
+
+    if (response.status === 429) {
+      // (Claude) Pause the whole host, then wait our turn again.
+      maxAttempts = Math.max(baseAttempts, 6);
+      if (attempt === maxAttempts) throw lastError;
+      const wait = rateLimitWaitMs(attempt, response);
+      cooldownUntil.set(host, Math.max(cooldownUntil.get(host) ?? 0, Date.now() + wait));
+      console.warn(`politeFetch: ${host} rate-limited us (429) — pausing ${Math.round(wait / 1000)} s`);
+      continue;
+    }
 
     if (!lastError.retryable || attempt === maxAttempts) throw lastError;
 

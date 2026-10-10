@@ -1,4 +1,6 @@
 import { Schema, model, type HydratedDocument, type InferSchemaType, type Types } from "mongoose";
+import { WORK_TYPES } from "../../lib/classify/workType.ts";
+import { BIDDING_STAGES } from "../../lib/sources/egp/procurement.ts";
 
 // The canonical TOR document (§4.3). Money is THB integers, dates are CE —
 // both converted at the adapter edge, never here.
@@ -12,14 +14,18 @@ export const TOR_CATEGORIES = [
 ] as const;
 export const TOR_CONTRACTS = ["purchase", "hire", "construction", "lease"] as const;
 export const TOR_METHODS = ["eBidding", "specific", "competitive"] as const;
+// `bestMatch` needs the caller's skills (ListInput.skills); without them it
+// falls back to `closingSoon`, the default — see tor.service.ts listTors.
+export const TOR_SORTS = ["closingSoon", "newest", "oldest", "budgetHigh", "budgetLow", "bestMatch"] as const;
+export const SKILL_TAG_SOURCES = ["keyword", "llm"] as const;
 export const TOR_STATUS_IDS = [
-  "inProgress", "contracted", "deliveredOnTime", "deliveredComplete",
+  "inProgress", "contracted", "deliveredOnTime", "deliveredComplete", "contractEnded",
 ] as const;
 
 export const TOR_GRADES = ["A", "B", "C"] as const;
 export const GRADE_PHASES = ["legitimacy", "fairness"] as const;
 /** Bump when weights or prompts change — see graderVersion on the schema. */
-export const GRADER_VERSION = 1;
+export const GRADER_VERSION = 2;
 /** Bump when the summary prompt or the FR-19 screen changes, so stale bullets
  *  are findable. Separate from GRADER_VERSION: the prompt can be reworded
  *  without the rulebook moving, and vice versa. */
@@ -71,6 +77,35 @@ const torSchema = new Schema(
     contractSignedAt: { type: Date, default: null },
     contractEndsAt: { type: Date, default: null },
 
+    // ── Bidding (modules/bidding). Where the project stands in e-GP's flow,
+    // and the bid deadline read out of its ประกาศเชิญชวน. Null until checked;
+    // a null deadline means "not published yet" or "could not be read", never
+    // a guess (FR-13). See AGENTS.md §3 for where each comes from.
+    bmaProjectId: { type: String, default: null },
+    // Keep this TOR's stage and deadline current (refreshBidding). Set for
+    // tenders seen while biddable — BMA rows and e-GP captures — not for the
+    // awarded national history, which has nothing left to move.
+    trackBidding: { type: Boolean, default: false },
+    biddingStage: { type: String, enum: [...BIDDING_STAGES, null], default: null },
+    // e-GP's own step name, kept so a stage can be audited, not trusted.
+    stageFlowName: { type: String, default: null },
+    stageCheckedAt: { type: Date, default: null },
+    bidOpensAt: { type: Date, default: null },
+    bidClosesAt: { type: Date, default: null },
+    deadlineEvidence: {
+      type: new Schema(
+        {
+          // The sentence the date was read from, verbatim.
+          quote: { type: String, default: "" },
+          // The ประกาศเชิญชวน PDF on the source portal.
+          documentUrl: { type: String, default: "" },
+          publishedAt: { type: Date, default: null },
+        },
+        { _id: false },
+      ),
+      default: null,
+    },
+
     category: { type: String, enum: TOR_CATEGORIES, default: null },
     contractType: { type: String, enum: TOR_CONTRACTS, default: null },
     methodId: { type: String, enum: TOR_METHODS, default: null },
@@ -84,6 +119,14 @@ const torSchema = new Schema(
     // The rules that fired, kept so a verdict can be audited rather than trusted.
     softwareSignals: {
       type: [{ _id: false, rule: String, weight: Number }],
+      default: [],
+    },
+    // What kind of software work (lib/classify/workType.ts) — the หมวดหมู่
+    // filter. Multi-label; ["other"] when nothing matched, never empty once
+    // classified. The terms that fired are kept for audit, like softwareSignals.
+    workTypes: { type: [{ type: String, enum: WORK_TYPES }], default: [] },
+    workTypeSignals: {
+      type: [{ _id: false, type: { type: String }, term: String }],
       default: [],
     },
     classifiedAt: { type: Date, default: null },
@@ -117,7 +160,9 @@ const torSchema = new Schema(
           // finding without one is rejected, not stored.
           evidence: { type: String, default: "" },
           checked: { type: Boolean, default: true },
-          chunkIndex: { type: Number, default: null },
+          // The source PDF containing the quote. Older rows omit it and load
+          // without a filename, so the field is nullable for compatibility.
+          filename: { type: String, default: null },
         },
       ],
       default: [],
@@ -130,7 +175,7 @@ const torSchema = new Schema(
     graderModel: { type: String, default: null },
 
     // ── Summary (step 8). Unlike the grade, this IS public — it is what the
-    // detail page shows where raw document chunks used to be.
+    // detail page shows as the gist of the documents.
     //
     // Which is why it is the one piece of model output that has to be built
     // incapable of accusing anyone: a bullet is generated prose about a named
@@ -141,9 +186,6 @@ const torSchema = new Schema(
         {
           _id: false,
           text: String,
-          // Which chunk produced it, so the serializer can cite a filename and
-          // page range. A point a reader cannot check is worth less.
-          chunkIndex: { type: Number, default: null },
         },
       ],
       default: [],
@@ -151,6 +193,26 @@ const torSchema = new Schema(
     summarizedAt: { type: Date, default: null },
     summaryVersion: { type: Number, default: null },
     summaryModel: { type: String, default: null },
+
+    // ── Required skills, in the profile vocabulary's slugs (techstack.vocabulary.ts).
+    // What best-match sorting scores a reader's profile against. Written by
+    // lib/skills/tagSkills.ts (`keyword`); an LLM pass may add `llm` entries
+    // later, and each writer only ever replaces its own source's entries.
+    // Public: a skill requirement says nothing about the agency (FR-19).
+    requiredSkills: {
+      type: [
+        {
+          _id: false,
+          slug: { type: String, required: true },
+          source: { type: String, enum: SKILL_TAG_SOURCES, required: true },
+          // Verbatim window around the hit, so a tag can be checked, not trusted.
+          evidence: { type: String, default: "" },
+        },
+      ],
+      default: [],
+    },
+    skillsTaggedAt: { type: Date, default: null },
+    skillTaggerVersion: { type: Number, default: null },
 
     status: { type: String, enum: TOR_STATUSES, default: "discovered", required: true },
     statusReason: { type: String, default: null },
@@ -178,6 +240,16 @@ torSchema.index({ status: 1, graderVersion: 1 });
 // limit as the corpus grows. This compound serves filter, sort and pagination
 // as one index range scan.
 torSchema.index({ status: 1, announcedAt: -1 });
+// The public scope (tor.service.ts publicScope) puts software + fiscal year in
+// front of every listing, so the listing index has to start with them.
+torSchema.index({ isSoftware: 1, fiscalYear: 1, status: 1, announcedAt: -1 });
+torSchema.index({ projectStatus: 1 });
+// The default listing: what is open, soonest deadline first.
+torSchema.index({ biddingStage: 1, bidClosesAt: 1 });
+torSchema.index({ workTypes: 1 });
+// Best-match scoring reads requiredSkills.slug; the backfill finds stale tags.
+torSchema.index({ "requiredSkills.slug": 1 });
+torSchema.index({ skillTaggerVersion: 1 });
 
 export type Tor = InferSchemaType<typeof torSchema>;
 export type TorDoc = HydratedDocument<Tor>;

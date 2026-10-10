@@ -1,10 +1,11 @@
 import { env } from "./config/env.ts";
 import { connectMongo, disconnectMongo } from "./db/mongo.ts";
+import { assertVertexConfig } from "./lib/ai/vertex.ts";
 import { findUngraded, gradeTor } from "./modules/grade/grade.service.ts";
 import { recordError } from "./modules/ingest/ingest.service.ts";
 import { beat, startBeating, workerId } from "./modules/monitor/heartbeat.service.ts";
 
-// The grading worker (stage ⑥): stored chunks -> rule findings -> a grade.
+// The grading worker (stage ⑥): stored full text -> rule findings -> a grade.
 //
 //   bun run grade-worker
 //
@@ -45,14 +46,20 @@ const snapshot = () => ({
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 async function loop() {
-  console.log(`grade-worker started (provider ${env.aiProvider}, model ${env.ollamaModel})`);
+  assertVertexConfig();
+  console.log(`grade-worker started (provider ${env.aiProvider}, model ${env.vertexModel})`);
 
   let idleLogged = false;
 
   await beat(snapshot());
   // Grading a single TOR takes 1-3 minutes, so without a ticking beat a
   // perfectly healthy worker would look dead for most of every job.
-  const stopBeating = startBeating(snapshot, env.heartbeatMs);
+  // Dashboard Stop: finish the current TOR, then let loop() return.
+  const stopBeating = startBeating(snapshot, env.heartbeatMs, () => {
+    console.log(`\nremote-stop — finishing current TOR, then stopping`);
+    running = false;
+    state = "stopping";
+  });
 
   try {
     while (running) {
@@ -92,7 +99,7 @@ async function loop() {
         } else {
           failed++;
           // gradeTor already moved the TOR off extraction_pending for the cases
-          // it can diagnose (no-chunks), so this will not spin on the same row.
+          // it can diagnose (no-text), so this will not spin on the same row.
           console.log(`fail ${tor.projectId}  ${result.reason}  ${elapsed}s`);
         }
       } catch (error) {
@@ -125,7 +132,7 @@ async function loop() {
 }
 
 // Grading one TOR takes 1-3 minutes. Abandoning it mid-way leaves a TOR with
-// chunks and no grade, which the next run picks up anyway — but finishing is
+// text and no grade, which the next run picks up anyway — but finishing is
 // cheaper than repeating, so the deadline is generous.
 async function shutdown(signal: string) {
   console.log(`\n${signal} — finishing current TOR, then stopping`);
@@ -146,3 +153,6 @@ process.on("SIGTERM", () => void shutdown("SIGTERM"));
 await connectMongo();
 await loop();
 await disconnectMongo();
+// loop() only returns on a dashboard Stop. Exit explicitly so a lingering
+// handle (an HTTP keep-alive, a stray timer) cannot keep a stopped worker alive.
+process.exit(0);

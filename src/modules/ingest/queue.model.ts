@@ -15,6 +15,10 @@ const queueSchema = new Schema(
     // the only evidence a crashed worker leaves behind.
     claimedAt: { type: Date, default: null },
     attempts: { type: Number, default: 0 },
+    // How long the last attempt held the row, written by the runner after
+    // release. release() clears claimedAt, so this is the only timing that
+    // survives a finished row; the dashboard's per-stage latency reads it.
+    heldMs: { type: Number, default: null },
     reason: { type: String, default: null },
 
     // The raw source row, carried so the worker needn't re-fetch discovery.

@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { HttpError } from "../../middleware/errors.ts";
-import { parseCreateUser, parseListUsers, parseUpdateUser } from "./user.validation.ts";
+import {
+  parseCreateUser,
+  parseListUsers,
+  parseSyncUser,
+  parseUpdateUser,
+} from "./user.validation.ts";
 
 // These tests exist because the bug they cover was real: the services used to
 // spread req.body straight into $set, so PATCH {"role":"admin"} wrote. The
@@ -139,5 +144,51 @@ describe("parseListUsers", () => {
   test("rejects an unknown role filter", () => {
     expect(status(() => parseListUsers({ role: "superuser" }))).toBe(400);
     expect(parseListUsers({ role: "agency" }).role).toBe("agency");
+  });
+});
+
+describe("parseSyncUser", () => {
+  const base = { google_id: "g1", email: "A@B.com" };
+
+  test("requires google_id and email", () => {
+    expect(status(() => parseSyncUser({ email: "a@b.com" }))).toBe(400);
+    expect(status(() => parseSyncUser({ google_id: "g1" }))).toBe(400);
+  });
+
+  test("keeps the Google profile fields and lowercases email", () => {
+    const out = parseSyncUser({
+      ...base,
+      email_verified: true,
+      name: "Somchai Jaidee",
+      given_name: "Somchai",
+      family_name: "Jaidee",
+      avatar_url: "https://lh3.googleusercontent.com/a/abc",
+      locale: "th",
+    });
+    expect(out).toEqual({
+      google_id: "g1",
+      email: "a@b.com",
+      email_verified: true,
+      name: "Somchai Jaidee",
+      given_name: "Somchai",
+      family_name: "Jaidee",
+      avatar_url: "https://lh3.googleusercontent.com/a/abc",
+      locale: "th",
+    });
+  });
+
+  test("role and profile never survive — sign-in cannot grant anything", () => {
+    const out = parseSyncUser({ ...base, role: "admin", profile: { team_size: 3 } }) as Record<
+      string,
+      unknown
+    >;
+    expect("role" in out).toBe(false);
+    expect("profile" in out).toBe(false);
+  });
+
+  test("rejects a non-https avatar", () => {
+    for (const avatar_url of ["http://x.com/a.png", "javascript:alert(1)", "data:image/png;base64,AA"]) {
+      expect(status(() => parseSyncUser({ ...base, avatar_url }))).toBe(400);
+    }
   });
 });

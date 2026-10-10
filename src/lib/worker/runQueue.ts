@@ -26,6 +26,23 @@ export type QueueRunner = {
   shutdown: (signal: string) => Promise<void>;
 };
 
+/**
+ * Stamp how long this attempt held the row. A separate write rather than part
+ * of release(), so claim.ts stays exactly the claim/lease logic. Never throws:
+ * a lost timing sample must not fail a row that already succeeded.
+ */
+async function recordHeld(model: Model<any>, row: unknown, since: Date | null) {
+  if (!since) return;
+  try {
+    await model.updateOne(
+      { _id: (row as { _id: unknown })._id },
+      { $set: { heldMs: Date.now() - since.getTime() } },
+    );
+  } catch (error) {
+    console.error("heldMs write failed (continuing):", error);
+  }
+}
+
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 export function createRunner<TRow extends { attempts?: number }>(
@@ -61,7 +78,13 @@ export function createRunner<TRow extends { attempts?: number }>(
     // An idle worker writes nothing to the queue, so without a ticking beat it
     // would be indistinguishable from a dead one.
     await beat(snapshot());
-    const stopBeating = startBeating(snapshot, env.heartbeatMs);
+    // A dashboard Stop ends the loop after the current row, the same as a
+    // signal, and the process exits once loop() returns.
+    const stopBeating = startBeating(snapshot, env.heartbeatMs, () => {
+      console.log(`\nremote-stop — finishing current row, then stopping`);
+      running = false;
+      state = "stopping";
+    });
 
     try {
       while (running) {
@@ -89,6 +112,7 @@ export function createRunner<TRow extends { attempts?: number }>(
         try {
           const result = await options.process(row);
           await release(options.model, row as never, result);
+          await recordHeld(options.model, row, currentSince);
           processed++;
           if (!result.ok) failed++;
           const note = result.ok && result.note ? ` (${result.note})` : "";
@@ -102,6 +126,7 @@ export function createRunner<TRow extends { attempts?: number }>(
           failed++;
           await options.onError?.(row, String(error));
           await release(options.model, row as never, { ok: false, reason: String(error) });
+          await recordHeld(options.model, row, currentSince);
           console.error(`throw ${options.label(row)}:`, error);
         } finally {
           inFlight = false;

@@ -1,4 +1,4 @@
-import type { Model } from "mongoose";
+import { Types, type Model } from "mongoose";
 import { env } from "../../config/env.ts";
 import { mongoState, pingMongo } from "../../db/mongo.ts";
 import { getStatus } from "../ingest/ingest.service.ts";
@@ -10,6 +10,7 @@ import { ErrorModel } from "../ingest/error.model.ts";
 import { ExtractionQueueModel } from "../extract/extraction.model.ts";
 import { TorModel, TOR_STATUSES } from "../tor/tor.model.ts";
 import { HeartbeatModel } from "./heartbeat.model.ts";
+import { HttpError } from "../../middleware/errors.ts";
 
 export type WorkerHealth = "live" | "stale" | "dead";
 
@@ -19,11 +20,22 @@ export type WorkerHealth = "live" | "stale" | "dead";
 const STALE_AFTER = () => env.heartbeatMs * 3;
 const DEAD_AFTER = () => env.workerLeaseMs;
 
-function healthOf(lastBeatAt: Date, now: number): WorkerHealth {
+export function healthOf(lastBeatAt: Date, now: number): WorkerHealth {
   const silentFor = now - lastBeatAt.getTime();
   if (silentFor > DEAD_AFTER()) return "dead";
   if (silentFor > STALE_AFTER()) return "stale";
   return "live";
+}
+
+const LATENCY_SAMPLE = 50;
+
+// Median, not mean: one wedged row holding a 15-minute lease would drag a mean
+// far away from what the typical row actually looks like.
+function median(values: (number | null)[]): number | null {
+  const sorted = values.filter((n): n is number => n !== null).sort((a, b) => a - b);
+  if (sorted.length === 0) return null;
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[mid]! : Math.round((sorted[mid - 1]! + sorted[mid]!) / 2);
 }
 
 /**
@@ -36,7 +48,7 @@ function healthOf(lastBeatAt: Date, now: number): WorkerHealth {
 export async function getPipelineStatus() {
   const now = Date.now();
 
-  const [mongoOk, ingest, extract, grade, heartbeats, torCounts, claims, errorKinds] =
+  const [mongoOk, ingest, extract, grade, heartbeats, torCounts, claims, errorKinds, recentDone] =
     await Promise.all([
       pingMongo(),
       getStatus(),
@@ -62,6 +74,22 @@ export async function getPipelineStatus() {
         { $group: { _id: "$kind", n: { $sum: 1 } } },
         { $sort: { n: -1 } },
       ]),
+      // The last few finished rows per stage, for "how long does one row take".
+      // heldMs is stamped by the runner after release (runQueue.ts) — release
+      // clears claimedAt, so it cannot be derived from the row afterwards.
+      // Rows finished before heldMs existed have none, and are skipped.
+      Promise.all([
+        QueueModel.find({ status: "done", heldMs: { $ne: null } })
+          .sort({ updatedAt: -1 })
+          .limit(LATENCY_SAMPLE)
+          .select("heldMs")
+          .lean(),
+        ExtractionQueueModel.find({ status: "done", heldMs: { $ne: null } })
+          .sort({ updatedAt: -1 })
+          .limit(LATENCY_SAMPLE)
+          .select("heldMs")
+          .lean(),
+      ]),
     ]);
 
   // Every status present, including the zeroes — a funnel with missing stages
@@ -71,17 +99,11 @@ export async function getPipelineStatus() {
   );
   for (const c of torCounts) torStatusCounts[c._id] = c.n;
 
-  // Median, not mean: one wedged row holding a 15-minute lease would drag a
-  // mean far away from what the typical claim actually looks like.
-  const medianAge = (rows: { claimedAt?: Date | null }[]): number | null => {
-    const ages = rows
-      .map((r) => (r.claimedAt ? now - new Date(r.claimedAt).getTime() : null))
-      .filter((n): n is number => n !== null)
-      .sort((a, b) => a - b);
-    if (ages.length === 0) return null;
-    const mid = Math.floor(ages.length / 2);
-    return ages.length % 2 ? ages[mid]! : Math.round((ages[mid - 1]! + ages[mid]!) / 2);
-  };
+  const medianAge = (rows: { claimedAt?: Date | null }[]): number | null =>
+    median(rows.map((r) => (r.claimedAt ? now - new Date(r.claimedAt).getTime() : null)));
+
+  const medianHeld = (rows: { heldMs?: number | null }[]) =>
+    median(rows.map((r) => r.heldMs ?? null));
 
   return {
     generatedAt: new Date(now).toISOString(),
@@ -91,6 +113,12 @@ export async function getPipelineStatus() {
     claimAgeMs: {
       ingest: medianAge(claims[0]),
       extract: medianAge(claims[1]),
+    },
+    // Median time one finished row was held, over the last LATENCY_SAMPLE.
+    // Grading has no queue rows to time. Null before anything has finished.
+    latencyMs: {
+      ingest: medianHeld(recentDone[0]),
+      extract: medianHeld(recentDone[1]),
     },
     // Failure counts by kind, most common first.
     errorsByKind: errorKinds.map((e) => ({ kind: e._id, count: e.n })),
@@ -113,10 +141,11 @@ export async function getPipelineStatus() {
         // is a different problem from one that died idle, and the row it was
         // holding is still leased until the lease expires.
         wasWorking: health !== "live" && h.state === "working",
+        stopRequestedAt: h.stopRequestedAt ?? null,
       };
     }),
     torStatusCounts,
-    // getStatus already reads the last 20 ingest_errors; lifted to the top
+    // getStatus already reads the last 100 ingest_errors; lifted to the top
     // level because errors are a property of the pipeline, not of ingestion.
     recentErrors: ingest.recentErrors,
   };
@@ -169,7 +198,7 @@ export async function listQueueRows(input: {
       updatedAt: r.updatedAt,
       // Extraction rows carry result counters; ingest rows do not.
       pdfCount: r.pdfCount ?? null,
-      chunkCount: r.chunkCount ?? null,
+      textChars: r.textChars ?? null,
     })),
     page,
     limit,
@@ -192,4 +221,78 @@ export async function listRuns(limit: number) {
     counts: r.counts,
     error: r.error ?? null,
   }));
+}
+
+// ── Controls ────────────────────────────────────────────────────────────────
+// The only writes the dashboard can make. Each is small and reversible in
+// effect: a stop finishes the current row, a flush only drops rows for
+// processes that are already gone, and a retry puts one row back in line.
+
+/** Ask workers to stop after their current row. Returns how many were flagged. */
+export async function requestStop(ids: string[]) {
+  const result = await HeartbeatModel.updateMany(
+    { _id: { $in: ids }, stopRequestedAt: null },
+    { $set: { stopRequestedAt: new Date() } },
+  );
+  return { flagged: result.modifiedCount };
+}
+
+/**
+ * Which heartbeat rows a flush removes: dead ones, plus workers that said
+ * "stopping" and have since gone quiet. A live worker is never flushed — its
+ * next beat would upsert the row straight back with a fresh startedAt, and the
+ * dashboard would report a restart that never happened.
+ */
+export function isFlushable(row: { lastBeatAt: Date; state: string }, now: number): boolean {
+  const health = healthOf(row.lastBeatAt, now);
+  return health === "dead" || (row.state === "stopping" && health !== "live");
+}
+
+/** Delete heartbeat rows for workers that are gone. */
+export async function flushDeadWorkers() {
+  const now = Date.now();
+  const rows = await HeartbeatModel.find().select("lastBeatAt state").lean();
+  const ids = rows.filter((r) => isFlushable(r, now)).map((r) => r._id);
+  if (ids.length === 0) return { removed: 0 };
+  const result = await HeartbeatModel.deleteMany({ _id: { $in: ids } });
+  return { removed: result.deletedCount };
+}
+
+/**
+ * Kinds a retry cannot fix. Oversize is decided by maxBundleBytes, not by
+ * luck: the same download will be the same size next time (ingest.service.ts).
+ */
+export const NON_RETRYABLE_KINDS = new Set(["oversize"]);
+
+/** Put the ingest queue row behind an error back to pending. */
+export async function retryError(errorId: string) {
+  if (!Types.ObjectId.isValid(errorId)) throw new HttpError(404, `No error ${errorId}`);
+
+  const error = await ErrorModel.findById(errorId).lean();
+  if (!error) throw new HttpError(404, `No error ${errorId}`);
+  if (NON_RETRYABLE_KINDS.has(error.kind)) {
+    throw new HttpError(409, `"${error.kind}" errors are not retryable`);
+  }
+  if (!error.projectId) throw new HttpError(409, "This error has no project to retry");
+
+  // Only a settled row: requeueing a "working" one would hand it to a second
+  // worker while the first still holds it.
+  const row = await QueueModel.findOneAndUpdate(
+    {
+      sourceId: error.sourceId,
+      projectId: error.projectId,
+      status: { $in: ["done", "failed"] },
+    },
+    { $set: { status: "pending", claimedBy: null, claimedAt: null, reason: null } },
+    { new: true },
+  ).lean();
+
+  if (!row) {
+    const exists = await QueueModel.exists({ sourceId: error.sourceId, projectId: error.projectId });
+    throw exists
+      ? new HttpError(409, `${error.projectId} is already queued or in progress`)
+      : new HttpError(404, `No queue row for ${error.projectId}`);
+  }
+
+  return { projectId: row.projectId, status: row.status };
 }

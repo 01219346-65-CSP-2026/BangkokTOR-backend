@@ -18,6 +18,11 @@ const techstackSchema = new Schema({
   // A duplicate is a 409 from the service, not a second row.
   name: { type: String, required: true, unique: true, trim: true },
 
+  // Stable machine id — the frontend's `SkillId` ("react", "egpApi"). Profiles
+  // are read and written by slug, so a display-name edit never breaks one.
+  // Sparse: rows an admin adds by hand need not have one.
+  slug: { type: String, unique: true, sparse: true, trim: true },
+
   // Optional grouping, matching how the frontend's skills wizard lays the
   // vocabulary out — see BangkokTOR-frontend/src/lib/skillProfile.ts.
   category: { type: String, default: null },

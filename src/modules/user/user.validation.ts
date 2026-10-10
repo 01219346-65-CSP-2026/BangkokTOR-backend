@@ -3,6 +3,7 @@ import {
   asObject,
   parsePageQuery,
   pruneUndefined,
+  readBoolean,
   readNumber,
   readObjectId,
   readString,
@@ -47,6 +48,22 @@ export type CreateUserBody = {
 export type UpdateUserBody = {
   email?: string;
   profile?: ProfileBody;
+};
+
+/**
+ * What the frontend sends after a Google sign-in. Only identity fields that
+ * Google is the authority for — never `role`, never `profile`, which the user
+ * edits through the normal update path.
+ */
+export type SyncUserBody = {
+  google_id: string;
+  email: string;
+  email_verified?: boolean;
+  name?: string;
+  given_name?: string;
+  family_name?: string;
+  avatar_url?: string;
+  locale?: string;
 };
 
 export type ListUsersQuery = {
@@ -135,6 +152,33 @@ export function parseUpdateUser(body: unknown): UpdateUserBody {
     }),
     "user",
   );
+}
+
+const NAME_MAX = 200;
+
+function readAvatarUrl(src: Record<string, unknown>): string | undefined {
+  const value = readString(src, "avatar_url", 2048);
+  if (value === undefined) return undefined;
+  // It ends up in an <img src>; anything but https is either mixed content or
+  // a `javascript:`/`data:` payload.
+  if (!value.startsWith("https://")) {
+    throw new HttpError(400, '"avatar_url" must be an https URL');
+  }
+  return value;
+}
+
+export function parseSyncUser(body: unknown): SyncUserBody {
+  const src = asObject(body);
+  return pruneUndefined({
+    google_id: required(readString(src, "google_id", 128), "google_id"),
+    email: required(readEmail(src, "email"), "email"),
+    email_verified: readBoolean(src, "email_verified"),
+    name: readString(src, "name", NAME_MAX),
+    given_name: readString(src, "given_name", NAME_MAX),
+    family_name: readString(src, "family_name", NAME_MAX),
+    avatar_url: readAvatarUrl(src),
+    locale: readString(src, "locale", 35),
+  }) as SyncUserBody;
 }
 
 export function parseListUsers(query: unknown): ListUsersQuery {

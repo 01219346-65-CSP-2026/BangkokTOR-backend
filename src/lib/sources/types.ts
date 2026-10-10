@@ -8,6 +8,11 @@ import type { FetchOutcome } from "./outcome.ts";
 // supports incremental queries, so "what's new" is our state, not theirs.
 export type Cursor = {
   lastSeenProjectId?: string;
+  // A source split across several resources resumes inside one of them;
+  // lastOffset is then an offset within resourceId.
+  resourceId?: string;
+  // The year the cursor was written for. A cursor for another year is stale.
+  fiscalYear?: number;
   lastOffset?: number;
   lastFullScanAt?: Date;
 };
@@ -36,7 +41,8 @@ export type RawDocument = {
 
 // The normalized shape, typed strictly because it reaches Mongo. Money is THB
 // integers, dates are CE — both converted at the adapter edge (§4.5).
-// No deadline field: neither source supplies one, FR-13 is still open, don't invent it.
+// No deadline here: no feed row carries one. It is read later from the
+// ประกาศเชิญชวน PDF (modules/bidding), and stays null when it cannot be.
 export type CanonicalTor = {
   sourceId: string;
   projectId: string;

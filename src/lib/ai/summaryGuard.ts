@@ -122,8 +122,8 @@ export function isDescriptive(text: string): boolean {
  *
  * Order matters: normalise first so a length check measures the text a reader
  * will actually see, then screen, then de-duplicate — the same requirement
- * often appears in two chunks of a bundle, and the model will faithfully report
- * it twice.
+ * often appears twice in a bundle, and the model will faithfully report it
+ * twice.
  */
 export function sanitizeBullets(raw: SummaryBullet[]): SummaryBullet[] {
   const kept: SummaryBullet[] = [];
@@ -144,7 +144,7 @@ export function sanitizeBullets(raw: SummaryBullet[]): SummaryBullet[] {
     if (seen.has(key)) continue;
     seen.add(key);
 
-    kept.push({ text, chunkIndex: bullet.chunkIndex });
+    kept.push({ text });
   }
 
   return kept;

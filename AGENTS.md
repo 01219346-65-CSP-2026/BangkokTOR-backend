@@ -60,9 +60,14 @@ does.** Don't put the whole API behind a session guard.
 
 ### Explicitly out of scope for this phase
 
-Bid submission, non-software procurement, anything outside Bangkok, monetization/billing,
-mobile, and taking legal action on a user's behalf. If a task seems to need one of these,
-stop and ask — it's more likely a misread than a scope change.
+Bid submission, non-software procurement, monetization/billing, mobile, and taking legal
+action on a user's behalf. If a task seems to need one of these, stop and ask — it's more
+likely a misread than a scope change.
+
+**Scope change (2026-10-02, Kelvin): location is no longer Bangkok-only.** Every province
+is in scope; the site lists all of Thailand by default with a จังหวัด filter, and Bangkok
+is highlighted on cards. Reason: more tenders matter more than the boundary. The SRS still
+says Bangkok — this decision supersedes it for this repo.
 
 ---
 
@@ -113,6 +118,95 @@ Both reference implementations are **evidence, not dependencies**. They are arch
 outside `src/` deliberately: the code in this repo is being rebuilt file by file, and the
 archive exists so hard-won live-API findings (below) are not rediscovered, not so they can
 be copied in wholesale.
+
+### Open tenders and the bid deadline (the default feed, 2026-10-02)
+
+**The national feeds only ever contain awarded projects.** govspending's `egp-contract`
+and CKAN both export projects that already have a contract, so every TOR they produce
+has a winner. Measured: all 4,482 stored TORs had `winnerName` and `contractSignedAt`.
+A site meant to show what can still be bid on needs a source that lists a project while it
+is open. **That source is the BMA portal (Source A)** (`lib/sources/bma/`). It lists
+projects the day they are announced, needs no key, and is not Turnstile-gated. Its
+`projectNumber` **is** the e-GP projectId. It only covers BMA agencies; open tenders from
+other agencies are reachable only through process5's gated search, which is not used.
+
+**The default feed is `EGP_FEED=all`**: one run reads govspending (all of Thailand, fast,
+awarded history; skipped when the published file is unchanged) and then BMA (open
+tenders, slow: ~2,200 projects a month, ~140 list pages for a fiscal year at ~16 s each).
+A transient BMA 500 skips that page; three in a row end the run. `discover --page N`
+resumes a BMA scan. `bun run restore-from-backup [--from D_M_YYYY]` puts backed-up TORs
+back into live (used 2026-10-02 to restore the 4,475 national TORs).
+
+- Discovery reads newest-first back `BMA_LOOKBACK_DAYS` (90). It sends a detail request
+  only for title candidates not already held (~4 s each, so this matters). It drops direct
+  awards (เฉพาะเจาะจง), since nobody outside can bid on them.
+- **Stage** comes from process5's announcement service, per project. These lookups are
+  not gated (`lib/sources/egp/procurement.ts`):
+  `…/egp-oann10-service/pb/a-egp-allt-project/announcement/getProcurementDetail?projectId=`
+  gives `flowName` (จัดทำ TOR / รายงานขอซื้อขอจ้าง / หนังสือเชิญชวน/ประกาศเชิญชวน /
+  อนุมัติ…ผู้ชนะ / จัดทำสัญญา), and `getProjectDetail` gives `budgetYear`.
+- **The deadline is in the ประกาศเชิญชวน, as one sentence** (`lib/thai/bidDeadline.ts`):
+  "ผู้ยื่นข้อเสนอต้องเสนอราคา…ในวันที่ ๒๐ ตุลาคม ๒๕๖๙ ระหว่างเวลา ๐๙.๐๐ น. ถึง ๑๒.๐๐ น."
+  `bidClosesAt` is the closing time at +07:00. The quote and source URL are stored in
+  `deadlineEvidence`. Read from, in order:
+  1. the newest ประกาศเชิญชวน on the BMA portal (one small PDF, sometimes a scan);
+  2. `annoudoc_*` in e-GP's **signed** bundle, `apv-common/infoProcureDocAnnounZip`.
+- **Temp vs signed bundle.** `infoProcureDocAnnounZipTemp`, which extraction reads, is
+  the **draft** set. Its `annoudoc_*` has the date left blank ("ในวันที่ ระหว่างเวลา น.
+  ถึง น."). The plain `infoProcureDocAnnounZip` is the signed set published with the
+  invitation, and that is where the filled-in date is. It does not exist before the
+  invitation.
+- PDF text gotchas, both real: tone marks dropped ("ผูยื่นขอเสนอ"), and tone marks drawn
+  from the Thai private-use block (U+F70A for ่). The parser strips marks and maps the
+  private-use block back before matching.
+- An unreadable deadline is left null and recorded in `ingest_errors`
+  (`deadline-not-found`, `invitation-scanned`, …). It is never estimated.
+- `modules/tor/tor.bidding.ts` defines **open** (stage invitation, deadline not past),
+  **upcoming** (TOR / purchase-report stage) and **closed** (everything else). The
+  public list defaults to open+upcoming, sorted `closingSoon`. Every BMA discovery run
+  re-checks the TORs that can still move; `bun run refresh-bidding` does the same on its
+  own. Run it all with `bun run discover`, then `bun run worker`.
+- **Audit for misses:** `bun run discover --full [--days N]` re-reads the whole window at
+  the loosest title bar, held projects included. It writes every rejected candidate, with
+  its software score and the rules that fired, to `data/reports/discover-<date>.tsv`,
+  highest score first. Tune `lib/classify/software.ts` from that file, not from guesses.
+- **National history is out of the live collections (2026-10-02).** It was moved to
+  `*_bk_2_10_2026` by `bun run backup-collections --apply` then `bun run move-national-out
+  --apply`. Live `tors` holds only BMA tenders. The backup is the analysis dataset (budgets,
+  agencies, winners, contract dates). `move-national-out` refuses to delete anything the
+  day's backup does not hold.
+- The สถานะโครงการ filter is this stage (`stage=`, `tor.bidding.ts stageFilter`), not
+  the portal's `projectStatus` column, which says ระหว่างดำเนินการ for nearly every
+  row. Rows never stage-checked (the national history) count as `contract` when they have
+  a signed contract, and as `cancelled` when the portal says ยกเลิกโครงการ. A cancelled
+  project keeps the `flowName` of the step it stopped at, so cancellation is read from
+  `getProjectDetail.projectStatus` ("R"; "A" = active).
+
+### Open tenders from every agency — the capture extension (2026-10-03)
+
+Nationally there are ~1,060 biddable software tenders a year (FY2569: 723 e-bidding, 336
+selection), so roughly 40–60 are open at any moment. Every agency's open tenders are
+listed only in e-GP's search, which is Turnstile-gated. **That search is never called from
+code, and Turnstile is never worked around.** A person runs it in their own browser, and
+`tools/egp-capture` (a Chrome/Brave MV3 extension) does three things:
+- it reads the responses e-GP returns to that page, and only those (`…/announcement`,
+  `…/announcement/csv`);
+- it pulls the 11-digit project ids out of them;
+- it sends them, on one click, to `POST /api/ingest/capture` (admin token, 2,000 per call).
+
+It never sends its own e-GP request and never touches `X-Announcement-Token`. See its README.
+
+- The endpoint only queues ids (`payload.egpCapture`). It makes no e-GP call (NFR-01).
+  Ids already held get `trackBidding: true` and are re-checked.
+- `processRow` fills captured rows from the ungated `getProcurementDetail` and
+  `getProjectDetail` (`lib/sources/egp/procurement.ts procurementFields`). Then the
+  usual classify → TOR → `checkBidding` runs. Without a BMA id, the deadline comes from
+  e-GP's signed bundle.
+- e-GP `methodId`: 16 = e-bidding, 19 = เฉพาะเจาะจง. Selection's code is unseen;
+  unknown codes are recorded as `capture-unknown-method`, never guessed.
+- `trackBidding` marks the TORs `refreshBidding` follows: BMA rows and captures. The
+  awarded national history is not tracked.
+- Bare "ประกวดราคา" is e-bidding, not selection (`classify/vocabulary.ts`, v3).
 
 ### Source A — the BMA e-GP API
 
@@ -182,6 +276,45 @@ no server-side filtering and mangles Thai query params.
   Either derive it from the announcement publish date, extract it from the PDF, or take
   the requirement back to the SRS. Do not invent a deadline field.
 
+### Source B′ — govspending bulk export (the default discovery feed, 2026-09-30)
+
+CKAN's e-GP package trails by roughly a year: FY2568 was published in 2026-05, and on
+2026-09-30 there was no FY2569. The current year comes from **govspending.data.go.th**
+(ภาษีไปไหน, run by DGA). It uses the same opend.data.go.th key and covers FY2558–2569,
+refreshed about monthly.
+
+```
+GET https://api-govspending.data.go.th/api/get/api/years?type=EGP        → [2569, 2568, …]
+GET …/api/get/api/bulkfile?type=EGP&code=egp-contract&year=NNNN&user_key=KEY
+                                  → URL of …/export/bulkfile/egp/NNNN-egp-contract.zip
+GET …/api/service/egp-contract?api-key=KEY&year=NNNN&offset&limit     (paged REST, same rows)
+```
+
+- FY2569's zip is 843 MB (`Last-Modified` 2026-09-08, byte ranges supported). It holds
+  `2569-egp-contract-1..9.csv` (~4.7 GB, 4,425,908 rows) plus `2569-egp-contract-submit.zip`
+  (bidders, not read).
+- **The CSVs are clean:** 28 columns, and every row has 28 values. There are no phantom
+  columns and no shift. The headers are longer names for the same facts
+  (`lib/sources/govspending/columns.ts` maps them onto the CKAN `COL` names, so one
+  normalizer serves both feeds). The method pair is labelled correctly here and backwards
+  in CKAN, so the alias crosses them over.
+- `lib/sources/govspending/` downloads the file once per published version (resumable
+  with `Range`), lists the CSVs from the last 1 MB, and inflates and parses each one as a
+  stream. The resume cursor is `{entry, row}` in `watermarks`. After a full scan the zip is
+  deleted, and the next run compares a HEAD request with `bulkCompletedVersion` and skips
+  if nothing changed. `EGP_FEED=ckan` switches back to CKAN.
+- On each rescan, rows for projects already held **refresh** their portal fields, which
+  is how `สถานะโครงการ` moves to `สิ้นสุดสัญญา`.
+- **Why not the e-GP site's own search:** process5's announcement search
+  (`egp-oann10-service/pb/a-egp-allt-project/announcement`) is gated by Cloudflare
+  Turnstile. A plain request gets `{"validateCfTurnTile":false}`. **Do not work around
+  it.** The per-project document chain below is not gated and is unchanged.
+
+**Storage policy.** Bundles and their PDFs are deleted once extraction reaches a final
+outcome (`extract.service.ts discardFiles`). Grading, skills and summaries read only
+`tor_chunks`. The `documents` rows remain, and their `url` is the e-GP bundle link.
+Keeping the files cost about 67 MB per project. `KEEP_DOCUMENT_FILES=true` keeps them.
+
 ### Source B — CKAN → national e-GP
 
 A two-hop chain, verified live. The join key is the whole trick: CKAN's `รหัสโครงการ`
@@ -199,11 +332,25 @@ process5.gprocurement.go.th/egp-upload-service/v1/downloadFileTest?fileId=<zipId
 Verified resource `e4eaa1b4-eb1a-4534-b227-988ee25b898d`, 511,606 rows. Page size 32,000;
 larger values are silently clamped.
 
+**Scope: one fiscal year, software only (2026-09-30).** data.go.th publishes one package
+per Buddhist-era fiscal year, titled `ข้อมูลโครงการจัดซื้อจัดจ้างจากระบบการจัดซื้อจัดจ้างภาครัฐ
+ปีงบประมาณ NNNN`. The slugs are inconsistent (`cgd-contract-2558`, `cdg-contract-2567`,
+`egp-contact-2568`), so match on the title. Each package is split into ~10 datastore
+resources. FY2568's package is `3beb7813-…`, with `2568-egp-contract-1..10` (the resource
+above is #1), and it was published 2026-05, about seven months after that year closed. On
+2026-09-30 there was **no FY2569 package**. So "this year" means the newest *published* year.
+`lib/sources/ckan/catalog.ts` resolves it on every run (`CKAN_FISCAL_YEAR` pins it), and
+discovery pages every resource with a server-side `filters={"ปีงบประมาณ":"NNNN"}`. Rows
+that are not software (`modules/ingest/scope.ts`) are dropped *before* they are enqueued.
+The website shows only software TORs from the newest year held (`tor.service.ts publicScope`).
+
 **Its defects, each of which has bitten and must be designed around:**
 
-- **No `datastore_search_sql`, and non-ASCII query params are mangled** (`q=ซอฟต์แวร์`
-  arrives as `?????`). Together: *all* Thai filtering happens client-side, after a bulk
-  pull. There is no such thing as a server-side search on this source.
+- **No `datastore_search_sql`, and free-text `q=ซอฟต์แวร์` is mangled** (arrives as
+  `?????`), so Thai *search* happens client-side after a bulk pull. Exact-match
+  `filters` (JSON) do work, Thai column names included: `{"ปีงบประมาณ":"2568"}` returns
+  511,606 on resource #1 and `"2569"` returns 0. `total` and `offset` then count only the
+  filtered rows.
 - **Rows are shifted against their header — real, confirmed on this resource.** The API
   declares 32 columns; each row carries 29 values. The three `(Eng)` columns are declared
   and never populated, so the gateway zips 29 values against 32 keys and every column after
@@ -219,6 +366,16 @@ larger values are silently clamped.
   including `จังหวัด` (index 15) are unaffected. Detect the shift, re-zip values against
   the header with the phantom columns removed, and leave unshifted rows untouched — a
   resource without the defect must not be corrupted by "fixing" it.
+
+  **The spelling varies by resource.** Resource #10 (`35961821-…`) declares the phantoms
+  with a space, as `จังหวัด (Eng)`. An exact-name match missed them, so those rows went
+  through unrealigned, with the status under `เขต/อำเภอ (Eng)`. Header names are now
+  compared with whitespace stripped (`columns.ts isPhantomColumn`).
+- **`สถานะโครงการ` is a contract-stage status**, not the e-GP website's procurement stage.
+  After realignment the observed values are `ระหว่างดำเนินการ` and `สิ้นสุดสัญญา`. The
+  stage list on the e-GP site (จัดทำ TOR, รายงานขอซื้อขอจ้าง, หนังสือเชิญชวน, …) is not
+  in this dataset, because every row here already has a contract. The website's status
+  filter offers whatever values the stored rows carry (`getStats().byProjectStatus`).
 - **The bundle download has no `content-length` header.** Verified bundles run from ~1MB
   to 512,452,129 bytes. There is nothing to pre-check, so the size cap must be enforced by
   counting bytes as they stream, and the write must stream to disk — `await
@@ -564,9 +721,9 @@ Still genuinely undecided:
   before it is incurred.
 - **Notification channel.** FR-17 says email; SRS §7.2 lists email vs. in-app vs. both as
   unfinalized.
-- **Where the deadline comes from**, given neither source supplies one (§3). FR-13 needs
-  it. Derive from announcement publish date, extract from the PDF, or take it back to the
-  SRS — do not invent a deadline field.
+- ~~Where the deadline comes from~~ — **decided 2026-10-02**: it's extracted from the
+  ประกาศเชิญชวน PDF and left null when it can't be read. See §3, "Open tenders and the bid
+  deadline".
 
 ---
 

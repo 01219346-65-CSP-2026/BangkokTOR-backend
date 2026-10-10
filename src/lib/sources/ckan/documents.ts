@@ -6,7 +6,13 @@ import type { RawDocument } from "../types.ts";
 import { SOURCE_ID } from "./normalize.ts";
 
 const EGP_ORIGIN = "https://process5.gprocurement.go.th";
+// Two bundles per project. `…Temp` is the DRAFT set, published for comment
+// before the invitation: what extraction reads. The plain one is the SIGNED
+// set published with the ประกาศเชิญชวน — its annoudoc_* is the "(สำเนา)"
+// copy with the bid date filled in, where the draft leaves it blank
+// (verified 2026-10-02). It does not exist until the invitation is out.
 const METADATA_URL = `${EGP_ORIGIN}/egp-approval-service/apv-common/infoProcureDocAnnounZipTemp`;
+const PUBLISHED_METADATA_URL = `${EGP_ORIGIN}/egp-approval-service/apv-common/infoProcureDocAnnounZip`;
 const DOWNLOAD_URL = `${EGP_ORIGIN}/egp-upload-service/v1/downloadFileTest`;
 
 const ZIP_MAGIC = [0x50, 0x4b, 0x03, 0x04]; // "PK\x03\x04"
@@ -30,8 +36,17 @@ export class EgpFieldError extends Error {
 //                                      returned as data so it never reaches
 //                                      ingest_errors and drowns the admin panel.
 //   fieldErrors[]                   -> we sent a malformed request; that IS a bug
-export async function listDocuments(projectId: string): Promise<RawDocument[]> {
-  const url = `${METADATA_URL}?projectId=${encodeURIComponent(projectId)}`;
+export function listDocuments(projectId: string): Promise<RawDocument[]> {
+  return probe(METADATA_URL, projectId);
+}
+
+/** The signed bundle published with the invitation. Empty before it exists. */
+export function listPublishedDocuments(projectId: string): Promise<RawDocument[]> {
+  return probe(PUBLISHED_METADATA_URL, projectId);
+}
+
+async function probe(metadataUrl: string, projectId: string): Promise<RawDocument[]> {
+  const url = `${metadataUrl}?projectId=${encodeURIComponent(projectId)}`;
   const response = await politeFetch(url, {}, { timeoutMs: 30_000 });
   const payload = (await response.json()) as MetadataResponse;
 

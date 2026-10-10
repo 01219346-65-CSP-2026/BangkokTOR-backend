@@ -3,6 +3,7 @@ import * as service from "./user.service.ts";
 import {
   parseCreateUser,
   parseListUsers,
+  parseSyncUser,
   parseUpdateUser,
 } from "./user.validation.ts";
 
@@ -23,6 +24,12 @@ export const createUser: RequestHandler = async (req, res) => {
 
   // 201 + Location is what a well-behaved REST API returns for a create.
   res.status(201).location(`${req.baseUrl}/${created.id}`).json(created);
+};
+
+// Called server-to-server by the frontend after every Google sign-in.
+export const syncUser: RequestHandler = async (req, res) => {
+  const { user, created } = await service.syncUser(parseSyncUser(req.body));
+  res.status(created ? 201 : 200).json(user);
 };
 
 export const updateUser: RequestHandler<{ id: string }> = async (req, res) => {

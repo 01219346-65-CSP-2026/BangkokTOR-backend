@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { Types } from "mongoose";
-import { serialize, serializeDetail, serializeGrade } from "./tor.serialize.ts";
+import { publicSourceUrl, serialize, serializeDetail, serializeGrade } from "./tor.serialize.ts";
 import type { TorLean } from "./tor.model.ts";
 
 function tor(overrides: Record<string, unknown> = {}): TorLean {
@@ -16,9 +16,9 @@ function tor(overrides: Record<string, unknown> = {}): TorLean {
     graderModel: "ollama:qwen2.5:7b",
     graderVersion: 1,
     ruleFindings: [
-      { code: "IDMISMATCH", fired: true, weight: 4, phase: "legitimacy", evidence: "กรมอื่น", checked: true, chunkIndex: 1 },
-      { code: "PENALTY", fired: true, weight: 3, phase: "fairness", evidence: "ค่าปรับวันละ", checked: true, chunkIndex: 4 },
-      { code: "HOURS", fired: false, weight: 3, phase: "fairness", evidence: "", checked: true, chunkIndex: 2 },
+      { code: "IDMISMATCH", fired: true, weight: 4, phase: "legitimacy", evidence: "กรมอื่น", checked: true },
+      { code: "PENALTY", fired: true, weight: 3, phase: "fairness", evidence: "ค่าปรับวันละ", checked: true },
+      { code: "HOURS", fired: false, weight: 3, phase: "fairness", evidence: "", checked: true },
     ],
     ...overrides,
   } as unknown as TorLean;
@@ -83,7 +83,7 @@ describe("serialize — the FR-19 gate", () => {
     const out = serialize(
       tor({
         ruleFindings: [
-          { code: "NOT_A_RULE", fired: true, weight: 9, phase: "fairness", evidence: "x", checked: true, chunkIndex: 0 },
+          { code: "NOT_A_RULE", fired: true, weight: 9, phase: "fairness", evidence: "x", checked: true },
         ],
       }),
     );
@@ -209,5 +209,66 @@ describe("serializeGrade — the internal shape", () => {
   test("keeps evidence so a grade can be audited", () => {
     const out = serializeGrade(tor());
     expect(out.findings.find((f) => f.code === "IDMISMATCH")?.evidence).toBe("กรมอื่น");
+  });
+});
+
+describe("serialize — required skills", () => {
+  test("emits slug and quote, not the tagger's bookkeeping", () => {
+    const out = serialize(
+      tor({
+        requiredSkills: [{ slug: "react", source: "keyword", evidence: "ใช้ React" }],
+        skillTaggerVersion: 1,
+      }),
+    ) as Record<string, unknown>;
+    expect(out.requiredSkills).toEqual([{ slug: "react", evidence: "ใช้ React" }]);
+    expect(out.skillTaggerVersion).toBeUndefined();
+  });
+
+  test("an untagged TOR has an empty list, not a missing field", () => {
+    expect(serialize(tor()).requiredSkills).toEqual([]);
+  });
+});
+
+describe("publicSourceUrl", () => {
+  const NEW = "https://process5.gprocurement.go.th/egp-agpc01-web/announcement?keywordSearch=67119569806";
+
+  test("rewrites the retired process3 link to the announcement search", () => {
+    const old =
+      "https://process3.gprocurement.go.th/egp2procmainWeb/jsp/procsearch.sch?announceType=&proj_id=67119569806";
+    expect(serialize(tor({ sourceUrl: old })).sourceUrl).toBe(NEW);
+  });
+
+  test("fills an e-GP row that has no link at all", () => {
+    expect(publicSourceUrl({ sourceId: "ckan-egp", projectId: "67119569806", sourceUrl: "" })).toBe(NEW);
+  });
+
+  test("leaves other sources' links alone", () => {
+    const url = "https://egp2.bangkok.go.th/project-detail/abc";
+    expect(publicSourceUrl({ sourceId: "bangkok-egp2", projectId: "x", sourceUrl: url })).toBe(url);
+  });
+});
+
+describe("serializeDetail — extracted PDF links", () => {
+  const EGP_ZIP = "https://process5.gprocurement.go.th/egp-upload-service/v1/downloadFileTest?fileId=abc";
+
+  function pdf(localPath: string | null) {
+    return {
+      _id: new Types.ObjectId(),
+      kind: "extractedPdf",
+      filename: "tor.pdf",
+      url: EGP_ZIP,
+      localPath,
+    } as unknown as Parameters<typeof serializeDetail>[1][number];
+  }
+
+  test("a PDF still on disk is served by our own route", () => {
+    const t = tor();
+    const [doc] = serializeDetail(t, [pdf("./data/extracted/1/tor.pdf")], null).documents;
+    expect(doc!.url).toBe(`/api/tors/${String(t._id)}/documents/${doc!.id}/file`);
+  });
+
+  test("once extraction has deleted it, the row links to the e-GP bundle", () => {
+    const [doc] = serializeDetail(tor(), [pdf(null)], null).documents;
+    expect(doc!.url).toBe(EGP_ZIP);
   });
 });

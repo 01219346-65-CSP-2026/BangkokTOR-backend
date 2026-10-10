@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>BangkokTOR capture — settings</title>
+    <style>
+      body { font: 13px/1.5 system-ui, -apple-system, sans-serif; color: #2f4739; margin: 16px; min-width: 340px; }
+      label { display: block; margin-top: 10px; font-weight: 600; }
+      input { width: 100%; box-sizing: border-box; padding: 6px 8px; border: 1px solid #7d9c87; border-radius: 6px; font: inherit; }
+      button { margin-top: 12px; padding: 6px 14px; border-radius: 6px; border: 0; background: #4a6b55; color: #fff; font: inherit; cursor: pointer; }
+      .hint { color: #6b6b74; font-size: 12px; font-weight: 400; }
+      #status { margin-left: 8px; }
+    </style>
+  </head>
+  <body>
+    <label>Backend URL
+      <input id="backendUrl" placeholder="http://localhost:8003" />
+    </label>
+    <label>Admin token <span class="hint">— the backend's ADMIN_TOKEN; leave empty if it is unset in development</span>
+      <input id="adminToken" type="password" autocomplete="off" />
+    </label>
+    <button id="save">Save</button>
+    <button id="test" style="background:#fff;color:#4a6b55;border:1px solid #4a6b55">Test connection</button>
+    <div id="status" style="margin-top:8px"></div>
+    <script src="options.js"></script>
+  </body>
+</html>

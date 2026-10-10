@@ -1,7 +1,7 @@
 import { Router } from "express";
 import * as controller from "./ingest.controller.ts";
 import { requireAdminToken } from "../../middleware/adminToken.ts";
-import { runLimit, pipelineLimit } from "../../middleware/limits.ts";
+import { runLimit, pipelineLimit, writeLimit } from "../../middleware/limits.ts";
 
 export const ingestRouter = Router();
 
@@ -11,3 +11,6 @@ export const ingestRouter = Router();
 // the admin UI's status polling at two calls an hour.
 ingestRouter.post("/run", runLimit, requireAdminToken, controller.startRun);
 ingestRouter.get("/status", pipelineLimit, controller.status);
+// Project ids from e-GP's search, sent by the capture extension (tools/egp-capture).
+// A write like any other: gated on the shared secret, fast, queues only.
+ingestRouter.post("/capture", writeLimit, requireAdminToken, controller.capture);

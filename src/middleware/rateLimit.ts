@@ -1,4 +1,4 @@
-import type { Request, RequestHandler } from "express";
+import type { Request, RequestHandler, Response } from "express";
 import { HttpError } from "./errors.ts";
 
 /**
@@ -22,6 +22,11 @@ export type RateLimitOptions = {
   max: number;
   /** Distinguishes buckets so two limiters never share a counter for one IP. */
   name: string;
+  /**
+   * Who a request counts against. Defaults to the client IP. Routes called only
+   * by the frontend's server all share that server's IP, so they key by user.
+   */
+  key?: (req: Request, res: Response) => string;
 };
 
 const buckets = new Map<string, Bucket>();
@@ -55,10 +60,15 @@ function clientKey(req: Request): string {
   return first || req.socket.remoteAddress || "unknown";
 }
 
-export function rateLimit({ windowMs, max, name }: RateLimitOptions): RequestHandler {
+export function rateLimit({
+  windowMs,
+  max,
+  name,
+  key: keyOf = clientKey,
+}: RateLimitOptions): RequestHandler {
   return (req, res, next) => {
     const now = Date.now();
-    const key = `${name}:${clientKey(req)}`;
+    const key = `${name}:${keyOf(req, res)}`;
 
     let bucket = buckets.get(key);
     if (!bucket || bucket.resetAt <= now) {

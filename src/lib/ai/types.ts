@@ -1,6 +1,8 @@
 // The grader port. Ollama implements it today; Vertex implements it later
 // without any caller changing — that swap is the whole reason this file exists.
 
+import type { FileSpan } from "../extract/fulltext";
+
 /** A rule as the model sees it. The definition is load-bearing: measured
  *  2026-09-08, asking qwen2.5:7b about a bare rule name scored 0/3, while the
  *  same question with an explicit definition scored 3/3. */
@@ -10,36 +12,33 @@ export type RuleSpec = {
   definition: string;
   /** What makes it unfair. Absent for presence-only (legitimacy) rules. */
   unfairWhen?: string;
-  /** Thai cue terms. Used to route chunks, and quoted to the model as hints. */
+  /** Thai cue terms. Used to route rules, and quoted to the model as hints. */
   cues: string[];
-};
-
-export type GradeChunk = {
-  index: number;
-  headingPath: string[];
-  text: string;
 };
 
 export type RuleFinding = {
   code: string;
   fired: boolean;
-  /** VERBATIM quote from the chunk. A fired finding without one is discarded
+  /** VERBATIM quote from the document. A fired finding without one is discarded
    *  by the caller — that is what makes FR-11 enforceable rather than hoped for. */
   evidence: string;
-  /** Which chunk produced it, so a quote can be traced back to a page. */
-  chunkIndex: number | null;
+  /** False when the rule was never asked — none of its cues appear in the text. */
+  checked: boolean;
+  filename: string | null;
 };
 
 export type GradeInput = {
   rules: RuleSpec[];
-  chunks: GradeChunk[];
+  /** The TOR's full extracted text. */
+  text: string;
+  files: FileSpan[];
 };
 
 export type Grader = {
   /** Identifies what produced a grade, e.g. "ollama:qwen2.5:7b". Stored on the
    *  TOR so you know which rows to regrade when the model changes. */
   readonly id: string;
-  gradeChunks(input: GradeInput): Promise<RuleFinding[]>;
+  grade(input: GradeInput): Promise<RuleFinding[]>;
 };
 
 // Measured cap. Unbounded, the model produced a 912-character "quote" that was
@@ -60,15 +59,14 @@ export const MAX_EVIDENCE_CHARS = 200;
 // prompt, screened on the way out of the model, and screened again before they
 // are written. See summaryGuard.ts.
 
-/** One point about what a section of the document states. */
+/** One point about what the document states. */
 export type SummaryBullet = {
   text: string;
-  /** Which chunk produced it, so a point can be traced back to a page. */
-  chunkIndex: number;
 };
 
 export type SummaryInput = {
-  chunks: GradeChunk[];
+  /** The TOR's full extracted text. */
+  text: string;
 };
 
 export type Summarizer = {
@@ -85,16 +83,6 @@ export const MAX_BULLET_CHARS = 180;
 
 /** What the detail page can show without becoming a wall of text again. */
 export const MAX_BULLETS = 8;
-
-/**
- * How many chunks a summary pass will read.
- *
- * A TOR carries up to 24 chunks and a call measures ~10s, so summarizing all of
- * them would add ~4 minutes to a grade run — and `aiTimeoutMs` is a per-batch
- * budget, so the pass would abort part way and lose everything. Ten keeps the
- * worst case near 100s.
- */
-export const MAX_SUMMARY_CHUNKS = 10;
 
 /** Whitespace-insensitive containment: extraction leaves column gutters as
  *  runs of spaces, so an otherwise-faithful quote can differ by whitespace. */
@@ -120,5 +108,31 @@ export function isVerbatim(evidence: string, haystack: string): boolean {
  *     array to translate the position back.
  */
 export function locateQuote(quote: string, haystack: string): number {
-  throw new Error("TODO(feat/91): locateQuote — see LEARNING.md step 3");
+  const strip = (s: string) => s.replace(/\s+/g, "");
+
+  if (!quote.trim()) 
+    return -1;
+
+  // better optimized if enabled, but misses a non significant edge case.
+  /*const a = haystack.indexOf(quote);
+  if (a !== -1) 
+    return a;*/
+  
+  const strippedChars: string[] = [];
+  const originalIndexes: number[] = [];
+
+  for (let i = 0; i < haystack.length; i++) {
+    if (!/\s/.test(haystack.charAt(i))) {
+      strippedChars.push(haystack.charAt(i));
+      originalIndexes.push(i);
+    }
+  }
+
+  const strippedText = strippedChars.join("");
+  const strippedIndex = strippedText.indexOf(strip(quote));
+
+  if (strippedIndex === -1) return -1;
+  else {
+    return originalIndexes[strippedIndex] ?? -1;
+  }
 }

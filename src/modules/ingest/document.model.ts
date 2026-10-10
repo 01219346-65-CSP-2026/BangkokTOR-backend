@@ -1,9 +1,10 @@
 import { Schema, model, type HydratedDocument, type InferSchemaType, type Types } from "mongoose";
 
-// One stored file per row (§4.3). For Source B that is a zip bundle; the PDFs
-// inside it are the extraction stage's problem, past the §4.1 boundary.
+// One stored file per row (§4.3). For Source B that is a zip bundle; the
+// extraction stage then adds one `extractedPdf` row per PDF it expanded from
+// that bundle, pointing back at it through `parentDocumentId`.
 
-export const DOCUMENT_KINDS = ["announcement", "tor", "bundle"] as const;
+export const DOCUMENT_KINDS = ["announcement", "tor", "bundle", "extractedPdf"] as const;
 export const TEXT_LAYERS = ["digital", "scanned", "unreadable", "missing"] as const;
 
 const documentSchema = new Schema(
@@ -20,6 +21,8 @@ const documentSchema = new Schema(
     sha256: { type: String, default: null },
     bytes: { type: Number, default: null },
     localPath: { type: String, default: null },
+    pages: { type: Number, default: null },
+    parentDocumentId: { type: Schema.Types.ObjectId, ref: "Document", default: null },
 
     // Set by triage (§4.1 stage ④), which routes the OCR bill. Null until then.
     textLayer: { type: String, enum: TEXT_LAYERS, default: null },

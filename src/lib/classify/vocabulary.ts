@@ -15,7 +15,7 @@ export type TorContractId = "purchase" | "hire" | "construction" | "lease";
 export type TorMethodId = "eBidding" | "specific" | "competitive";
 
 export type TorStatusId =
-  | "inProgress" | "contracted" | "deliveredOnTime" | "deliveredComplete";
+  | "inProgress" | "contracted" | "deliveredOnTime" | "deliveredComplete" | "contractEnded";
 
 export const CATEGORY_BY_GOODS: Record<string, TorCategoryId> = {
   "วัสดุครุภัณฑ์คอมพิวเตอร์": "it",
@@ -70,14 +70,18 @@ const CONTRACT_CONTAINS: Array<[string, TorContractId]> = [
   ["ซื้อ", "purchase"],
 ];
 
-// Order matters: the e-bidding variant must be tested before bare ประกวดราคา,
-// which is the non-electronic competitive method.
+// Bare ประกวดราคา is e-bidding: since the 2017 procurement act a price
+// tender runs through e-GP's e-bidding, and e-GP itself reports methodId 16
+// (e-bidding) for BMA projects labelled plain "ประกวดราคา" (verified
+// 2026-10-03). It used to map to `competitive`, which is selection — คัดเลือก,
+// an invite-only method. Order matters: คัดเลือก is tested first so a label
+// carrying both words reads as selection.
 const METHOD_CONTAINS: Array<[string, TorMethodId]> = [
   ["e-bidding", "eBidding"],
   ["ประกวดราคาอิเล็กทรอนิกส์", "eBidding"],
   ["เฉพาะเจาะจง", "specific"],
   ["คัดเลือก", "competitive"],
-  ["ประกวดราคา", "competitive"],
+  ["ประกวดราคา", "eBidding"],
 ];
 
 const STATUS_CONTAINS: Array<[string, TorStatusId]> = [
@@ -85,6 +89,9 @@ const STATUS_CONTAINS: Array<[string, TorStatusId]> = [
   ["ส่งงานตามกำหนด", "deliveredOnTime"],
   ["ส่งงานตรงตามกำหนด", "deliveredOnTime"],
   ["ส่งงานครบถ้วน", "deliveredComplete"],
+  // The finished state, and it contains "สัญญา" — so it has to come before the
+  // catch-all below, or a completed contract reads as "contract issued".
+  ["สิ้นสุดสัญญา", "contractEnded"],
   ["สัญญา", "contracted"],
 ];
 
