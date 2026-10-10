@@ -78,7 +78,7 @@ bun run grade-worker    # needs Ollama on :11434
 
 Checks: `bun run typecheck`, `bun test`.
 
-Working on a `feat/9x` branch? Start with [`LEARNING.md`](LEARNING.md). Machine setup is in
+Working on a learning branch? (`feat/9x`, `feat/SCRUM-75-77`: that one has two guides, A and B) Start with [`LEARNING.md`](LEARNING.md). Machine setup is in
 [`docs/learning/`](docs/learning/README.md).
 
 ## API
