@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { checkDeterministic } from "../../modules/grade/grade.service.ts";
 import { gradeFindings, PASS_THRESHOLD, skipFairness, type Finding } from "./score.ts";
 import { FAIRNESS_RULES, LEGITIMACY_RULES, RULES } from "./rules.ts";
 
@@ -136,5 +137,23 @@ describe("skipFairness", () => {
 
   test("false when legitimacy passed", () => {
     expect(skipFairness(allOk("legitimacy"))).toBe(false);
+  });
+});
+
+describe("deterministic mismatch checks", () => {
+  test("keep a non-empty evidence string when a budget mismatch fires", () => {
+    const findings = checkDeterministic({ agency: "กรุงเทพมหานคร", budget: 2500000 }, "ค่ากลาง 1000000");
+
+    const mismatch = findings.find((f) => f.code === "BUDGETMISMATCH");
+    expect(mismatch).toMatchObject({ fired: true, checked: true });
+    expect(mismatch?.evidence).toBe("2500000");
+  });
+
+  test("keep a non-empty evidence string when an agency mismatch fires", () => {
+    const findings = checkDeterministic({ agency: "กรุงเทพมหานคร", budget: 2500000 }, "หน่วยงานอื่น");
+
+    const mismatch = findings.find((f) => f.code === "IDMISMATCH");
+    expect(mismatch).toMatchObject({ fired: true, checked: true });
+    expect(mismatch?.evidence).toBe("กรุงเทพมหานคร");
   });
 });

@@ -23,7 +23,7 @@ function aiRulesFor(phase: "legitimacy" | "fairness") {
 
 // IDMISMATCH and BUDGETMISMATCH: the document must agree with the record.
 // Both are checked against text we hold, so neither costs a model call.
-function checkDeterministic(
+export function checkDeterministic(
   tor: { agency?: string | null; budget?: number | null },
   haystack: string,
 ): Finding[] {
@@ -35,13 +35,14 @@ function checkDeterministic(
     findings.push({
       code: "IDMISMATCH",
       fired: !present,
-      evidence: present ? tor.agency : "",
+      evidence: tor.agency,
       checked: true,
+      filename: null,
     });
   } else {
     // No agency on the record: nothing to compare against, so nothing is
     // claimed. Unchecked, never a pass.
-    findings.push({ code: "IDMISMATCH", fired: false, evidence: "", checked: false });
+    findings.push({ code: "IDMISMATCH", fired: false, evidence: "", checked: false, filename: null });
   }
 
   // BUDGETMISMATCH — the figure should appear, allowing for Thai digit grouping
@@ -53,11 +54,12 @@ function checkDeterministic(
     findings.push({
       code: "BUDGETMISMATCH",
       fired: !present,
-      evidence: present ? whole : "",
+      evidence: whole,
       checked: true,
+      filename: null,
     });
   } else {
-    findings.push({ code: "BUDGETMISMATCH", fired: false, evidence: "", checked: false });
+    findings.push({ code: "BUDGETMISMATCH", fired: false, evidence: "", checked: false, filename: null });
   }
 
   return findings;
