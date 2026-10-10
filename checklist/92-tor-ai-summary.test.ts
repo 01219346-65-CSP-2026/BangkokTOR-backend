@@ -7,25 +7,28 @@ import { exists, load, source } from "./helpers.ts";
 // Each test is one box to tick in LEARNING.md; the number is the step.
 
 describe("feat/92 checklist", () => {
-  test("step 1: a SummaryBullet names its file, not a chunk", () => {
+  test("step 1: a SummaryBullet has a topic and names its file, not a chunk", () => {
     const types = source("src/lib/ai/types.ts");
     const bullet = types.slice(types.indexOf("export type SummaryBullet"), types.indexOf("export type SummaryInput"));
+    expect(bullet).toContain("section");
     expect(bullet).toContain("filename");
     expect(bullet).not.toContain("chunkIndex");
   });
 
-  test("step 1: the summarizer reads the whole text — chunk types are gone", () => {
+  test("step 1: the summarizer reads the whole text and its files", () => {
     const types = source("src/lib/ai/types.ts");
     expect(types).not.toContain("GradeChunk");
     expect(types).not.toContain("MAX_SUMMARY_CHUNKS");
     const input = types.slice(types.indexOf("export type SummaryInput"));
-    expect(input.slice(0, input.indexOf(";") + 1)).not.toContain("chunks");
+    const body = input.slice(0, input.indexOf("};") + 2);
+    expect(body).not.toContain("chunks");
+    expect(body).toContain("files");
   });
 
-  test("step 2: sanitizeBullets keeps the filename", async () => {
+  test("step 2: sanitizeBullets keeps the topic and the filename", async () => {
     const { sanitizeBullets } = await load("src/lib/ai/summaryGuard.ts");
-    expect(sanitizeBullets([{ text: "ส่งมอบภายใน 90 วัน", filename: "doc_1.pdf" }])).toEqual([
-      { text: "ส่งมอบภายใน 90 วัน", filename: "doc_1.pdf" },
+    expect(sanitizeBullets([{ section: "scope", text: "ส่งมอบภายใน 90 วัน", filename: "doc_1.pdf" }])).toEqual([
+      { section: "scope", text: "ส่งมอบภายใน 90 วัน", filename: "doc_1.pdf" },
     ]);
   });
 
@@ -40,10 +43,14 @@ describe("feat/92 checklist", () => {
     expect(service).not.toContain("GradeChunk");
   });
 
-  test("step 7: SUMMARY_VERSION is 2 and a stored bullet has a filename", async () => {
+  test("step 7: SUMMARY_VERSION is 2 and a stored bullet has a topic and a filename", async () => {
     const { SUMMARY_VERSION, TorModel } = await load("src/modules/tor/tor.model.ts");
     expect(SUMMARY_VERSION).toBe(2);
     expect(TorModel.schema.path("summaryBullets.filename")).toBeDefined();
+    const section = TorModel.schema.path("summaryBullets.section");
+    expect(section, "add section to the summaryBullets sub-document").toBeDefined();
+    // Only the three topics (or null, for rows written before topics existed).
+    expect(section.enumValues).toEqual(expect.arrayContaining(["objective", "scope", "qualifications"]));
   });
 
   test("step 9: Ollama is gone", async () => {

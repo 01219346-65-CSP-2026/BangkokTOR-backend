@@ -59,11 +59,14 @@ export const MAX_EVIDENCE_CHARS = 200;
 // prompt, screened on the way out of the model, and screened again before they
 // are written. See summaryGuard.ts.
 
-/** One point about what the document states. */
+/** One point about what the document states.
+ *  TODO(feat/92) step 1: add `section: SummarySection | null` and
+ *  `filename: string | null`. */
 export type SummaryBullet = {
   text: string;
 };
 
+// TODO(feat/92) step 1: SummaryInput also takes the FileSpan list.
 export type SummaryInput = {
   /** The TOR's full extracted text. */
   text: string;
@@ -81,8 +84,22 @@ export type Summarizer = {
  *  string field is where fabrication starts. */
 export const MAX_BULLET_CHARS = 180;
 
-/** What the detail page can show without becoming a wall of text again. */
-export const MAX_BULLETS = 8;
+/**
+ * The three topics the detail page shows, as three cards (feat/92):
+ *   objective      วัตถุประสงค์        why the agency is buying this
+ *   scope          ขอบเขตงาน          what the winner must deliver
+ *   qualifications คุณสมบัติผู้เสนอราคา  who is allowed to bid
+ * The order here is the order on the page. Given — you use these, you don't
+ * change them.
+ */
+export const SUMMARY_SECTIONS = ["objective", "scope", "qualifications"] as const;
+export type SummarySection = (typeof SUMMARY_SECTIONS)[number];
+
+/** Per card. Enough for a scope of work, short enough to read on a phone. */
+export const MAX_POINTS_PER_SECTION = 5;
+
+/** The whole summary: every card full. */
+export const MAX_BULLETS = SUMMARY_SECTIONS.length * MAX_POINTS_PER_SECTION;
 
 /** Whitespace-insensitive containment: extraction leaves column gutters as
  *  runs of spaces, so an otherwise-faithful quote can differ by whitespace. */
