@@ -41,18 +41,52 @@ export const STRONG_FIT = 70;
 /** The notification body. Neutral: what matched, never a judgement (FR-19). */
 export function matchMessage(fit: number, matched: number, required: number): string {
   // TODO(A1). Exactly: ตรงกับทักษะของคุณ <matched> จาก <required> รายการ (<fit>%)
-  throw new Error("TODO(A1): matchMessage");
+  return `ตรงกับทักษะของคุณ ${matched} จาก ${required} รายการ (${fit}%)` 
 }
 
 export function matchTorToUsers(tor: MatchTor, users: MatchUser[], now: Date = new Date()): MatchResult[] {
   // TODO(A2–A4). In this order, per LEARNING-A-ingest.md:
-  //  - TOR level: no requiredSkills → []; biddingStatus(tor, now) === "closed" → []
+
+
+  let matchedResult = [];
+
+  // TOR level: no requiredSkills → []; biddingStatus(tor, now) === "closed" → []
+  if (!tor.requiredSkills || biddingStatus(tor, now) == "closed") return [];
   //  - per user: notify.onMatch off → skip; budget outside [budgetMin, budgetMax] → skip
   //    (only when tor.budget is known; a null bound means "no limit")
-  //  - matched = DISTINCT profile skills found in tor.requiredSkills (a Set)
-  //  - fit = fitScore(matched, required); below the threshold → skip
-  //    (STRONG_FIT when onlyStrongFit, else REACHABLE_MIN_FIT)
-  //  - sort: fitScore desc, then userId asc
-  void [tor, users, now, biddingStatus, fitScore, REACHABLE_MIN_FIT];
-  throw new Error("TODO(A2): matchTorToUsers");
+  for (let user of users) {
+    if (!user.notify.onMatch) continue;
+    if (tor.budget) {
+      if (user.budgetMin !== null && user.budgetMin > tor.budget) continue;
+      if (user.budgetMax !== null && user.budgetMax < tor.budget) continue;
+    }
+
+    //  - matched = DISTINCT profile skills found in tor.requiredSkills (a Set) 
+    let matched = [... new Set(user.skills)].filter(e => tor.requiredSkills.includes(e));
+    //  - fit = fitScore(matched, required); below the threshold → skip
+    let fit = fitScore(matched.length, tor.requiredSkills.length) || 0;
+    if (fit >= STRONG_FIT && user.notify.onlyStrongFit) {
+      matchedResult.push({
+        "userId": user.id,
+        "torId": tor.id,
+        "fitScore": fit,
+        "title": tor.projectName,
+        "message": matchMessage(fit, matched.length, tor.requiredSkills.length)
+      })
+    } else if (fit >= REACHABLE_MIN_FIT && !user.notify.onlyStrongFit) {
+      matchedResult.push({
+        "userId": user.id,
+        "torId": tor.id,
+        "fitScore": fit,
+        "title": tor.projectName,
+        "message": matchMessage(fit, matched.length, tor.requiredSkills.length)
+      })
+    }
+    //    (STRONG_FIT when onlyStrongFit, else REACHABLE_MIN_FIT)
+    //  - sort: fitScore desc, then userId asc
+  }
+  const sortedMatchedResult = [...matchedResult].sort((a, b) => 
+                              (b.fitScore - a.fitScore) || a.userId.localeCompare(b.userId)
+                          )
+  return sortedMatchedResult
 }
