@@ -242,6 +242,7 @@ export function serializeGrade(tor: TorLean) {
       phase: f.phase,
       checked: f.checked,
       evidence: f.evidence,
+      filename: f.filename ?? null,
     })),
   };
 }

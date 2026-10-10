@@ -116,6 +116,9 @@ export const env = {
   ollamaModel: process.env.OLLAMA_MODEL ?? "qwen2.5:7b",
   aiTimeoutMs: Number(process.env.AI_TIMEOUT_MS ?? 300_000),
 
+  vertexApiKey: process.env.VERTEX_API_KEY ?? "",
+  vertexModel: process.env.VERTEX_MODEL ?? "gemini-2.5-flash",
+
   // Max amount of characters to extract from tor before truncating.
   maxFulltextChars: Number(process.env.MAX_FULLTEXT_CHARS ?? 400_000),
 } as const;
