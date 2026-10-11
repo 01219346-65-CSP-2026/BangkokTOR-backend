@@ -26,7 +26,12 @@ function row(over: Partial<InsightRow> = {}): InsightRow {
     province: BANGKOK,
     agency: "สำนักการระบายน้ำ",
     announcedAt: new Date("2026-09-15T03:00:00Z"),
-    biddingStage: null,
+    // Open by default (invitation out, no deadline read yet) — an ordinary
+    // row here is meant to be a biddable TOR unless a test says otherwise.
+    // A null stage reads as closed (see isBiddable's comment), which is
+    // right for the real national/CKAN feed but wrong as a default for a
+    // fixture whose whole point is "a normal biddable row".
+    biddingStage: "invitation",
     bidClosesAt: null,
     ...over,
   };
@@ -108,6 +113,24 @@ describe("step 2: totals (the KPI row)", () => {
       row({ biddingStage: "tor" }), // upcoming, not open
     ];
     expect(buildInsights(rows, NOW).totals.openNow).toBe(2);
+  });
+
+  test("biddable means a team can still act on it, not just that the method allows it", () => {
+    const rows = [
+      row({ biddingStage: "invitation", bidClosesAt: null }), // open: biddable
+      row({ biddingStage: "tor" }), // upcoming: biddable
+      row({ biddingStage: "awarded" }), // already has a winner: not biddable
+      row({ biddingStage: "contract" }), // under contract: not biddable
+      row({ biddingStage: "cancelled" }), // cancelled: not biddable
+      row({ biddingStage: "invitation", bidClosesAt: new Date("2026-10-01T00:00:00Z") }), // deadline passed: not biddable
+      // A null stage reads as closed: the national/CKAN feed is
+      // awarded-projects-only, so an unread stage from that source already
+      // has a winner even though nothing wrote "awarded" for it.
+      row({ biddingStage: null }), // not biddable
+      row({ methodId: "competitive", biddingStage: "invitation" }), // open: biddable
+    ];
+    const { totals } = buildInsights(rows, NOW);
+    expect(totals.biddableTors).toBe(3);
   });
 
   test("no rows is a valid answer, not a crash", () => {
