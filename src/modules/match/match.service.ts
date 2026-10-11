@@ -1,8 +1,8 @@
-import type { Types } from "mongoose";
+import { Types } from "mongoose";
 import { TorModel } from "../tor/tor.model.ts";
 import { UserModel } from "../user/user.model.ts";
 import { NotificationModel } from "../notification/notification.model.ts";
-import { matchTorToUsers, type MatchUser } from "./match.ts";
+import { matchTorToUsers, type MatchTor, type MatchUser } from "./match.ts";
 
 type StoredUser = {
   _id: Types.ObjectId;
@@ -16,12 +16,19 @@ type StoredUser = {
 
 /** A stored user in matching's shape. Defaults mirror me.service getProfile. */
 export function toMatchUser(user: StoredUser): MatchUser {
-  // TODO(A5). id as a string; skills = the populated tech_stack_id.slug values,
   // skipping null refs and null slugs; budgets ?? null; notify defaults to
   // on_match TRUE and only_strong_fit TRUE — the same defaults as
   // me.service.ts getProfile, so matching and the wizard never disagree.
-  void user;
-  throw new Error("TODO(A5): toMatchUser");
+  return {
+    id: String(user._id),
+    skills: user.profile?.tech_stacks?.map(techstack => techstack.tech_stack_id?.slug).filter((x): x is string => x != null) ?? [],
+    budgetMin: user.profile?.budget_min ?? null,
+    budgetMax: user.profile?.budget_max ?? null,
+    notify: { 
+      onMatch: user.profile?.notify?.on_match ?? true,
+      onlyStrongFit: user.profile?.notify?.only_strong_fit ?? true,
+    }
+  }
 }
 
 /**
@@ -31,17 +38,62 @@ export function toMatchUser(user: StoredUser): MatchUser {
  * Returns how many NEW notifications were written.
  */
 export async function notifyMatches(torId: Types.ObjectId | string, now: Date = new Date()): Promise<number> {
-  // TODO(A6).
-  //  1. TorModel.findById(torId, <the 6 fields MatchTor needs>).lean(); none → 0
-  //  2. UserModel.find(users with a saved profile who haven't turned matches off)
-  //       .populate({ path: "profile.tech_stacks.tech_stack_id", select: { slug: 1 } })
-  //     — me.service.ts getProfile does the same populate; read it.
-  //  3. run the pure matcher on <tor as MatchTor> and users.map(toMatchUser)
-  //  4. NotificationModel.bulkWrite with one updateOne per match: filter on
-  //     user_id + tor_id, and an upsert that only sets fields on INSERT
-  //     (Mongo's "set on insert" operator — look it up) — title, message,
-  //     fit_score, matched_at, and email_status pending (the contract)
-  //  5. return result.upsertedCount (NEW rows only)
-  void [torId, now, TorModel, UserModel, NotificationModel, matchTorToUsers];
-  throw new Error("TODO(A6): notifyMatches");
+  const tor = await TorModel.findById(torId, {
+    projectName: 1, budget: 1, requiredSkills: 1, methodId: 1, biddingStage: 1, bidClosesAt: 1,
+  })
+    .lean<{
+      _id: Types.ObjectId;
+      projectName: string;
+      budget?: number | null;
+      requiredSkills?: Array<{ slug: string }>;
+      methodId?: string | null;
+      biddingStage?: string | null;
+      bidClosesAt?: Date | null;
+    }>()
+    .exec();
+  if (!tor) return 0;
+
+  const matchTor: MatchTor = {
+    id: String(tor._id),
+    projectName: tor.projectName,
+    budget: tor.budget ?? null,
+    // keyword and llm taggers can both tag the same slug
+    requiredSkills: [...new Set((tor.requiredSkills ?? []).map((s) => s.slug))],
+    methodId: tor.methodId ?? null,
+    biddingStage: tor.biddingStage ?? null,
+    bidClosesAt: tor.bidClosesAt ?? null,
+  };
+
+  // updated_at marks a saved profile. on_match unset means on (getProfile's
+  // default), so filter $ne false rather than === true.
+  const users = await UserModel.find(
+    { "profile.updated_at": { $exists: true }, "profile.notify.on_match": { $ne: false } },
+    { profile: 1 },
+  )
+    .populate({ path: "profile.tech_stacks.tech_stack_id", select: { slug: 1 } })
+    .lean<StoredUser[]>()
+    .exec();
+
+  const matches = matchTorToUsers(matchTor, users.map(toMatchUser), now);
+  if (matches.length === 0) return 0;
+
+  const result = await NotificationModel.bulkWrite(
+    matches.map((m) => ({
+      updateOne: {
+        filter: { user_id: new Types.ObjectId(m.userId), tor_id: tor._id },
+        update: {
+          $setOnInsert: {
+            title: m.title,
+            message: m.message,
+            fit_score: m.fitScore,
+            matched_at: now,
+            email_status: "pending",
+          },
+        },
+        upsert: true,
+      },
+    })),
+    { ordered: false },
+  );
+  return result.upsertedCount;
 }

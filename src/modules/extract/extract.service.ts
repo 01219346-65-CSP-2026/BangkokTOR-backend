@@ -10,6 +10,7 @@ import { DocumentModel } from "../ingest/document.model.ts";
 import { recordError } from "../ingest/ingest.service.ts";
 import { TorModel } from "../tor/tor.model.ts";
 import { tagTorSkills } from "../tor/tor.skills.ts";
+import { notifyMatches } from "../match/match.service.ts";
 import { ExtractionQueueModel } from "./extraction.model.ts";
 import { buildFullText } from "../../lib/extract/fulltext.ts";
 import { TorTextModel } from "./torText.model.ts";
@@ -223,6 +224,19 @@ async function extractBundle(queued: ExtractRow): Promise<BundleOutcome> {
 
   // Tag the TOR now that it has reached the grading queue.
   await tagTorSkills(row.torId);
+
+  // Matching reads the tags just written. A matching bug costs the
+  // notifications, never the extraction — but it is logged, not swallowed (FR-06).
+  try {
+    await notifyMatches(row.torId);
+  } catch (err) {
+    await recordError({
+      sourceId: SOURCE_ID,
+      projectId: row.projectId,
+      kind: "match-failed",
+      message: err instanceof Error ? err.message : String(err),
+    });
+  }
 
   // The loader JSON is an intermediate. The expanded PDFs go too, in
   // discardFiles, unless KEEP_DOCUMENT_FILES — then each `extractedPdf` row is

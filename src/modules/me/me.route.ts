@@ -19,3 +19,6 @@ meRouter.get("/bookmarks", controller.listBookmarks);
 meRouter.get("/bookmarks/:torId", controller.getBookmark);
 meRouter.put("/bookmarks/:torId", controller.putBookmark);
 meRouter.delete("/bookmarks/:torId", controller.deleteBookmark);
+
+meRouter.get("/notifications", controller.listNotifications);
+meRouter.patch("/notifications/:id/read", controller.markNotificationRead);
