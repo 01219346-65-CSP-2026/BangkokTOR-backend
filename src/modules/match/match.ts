@@ -40,14 +40,10 @@ export const STRONG_FIT = 70;
 
 /** The notification body. Neutral: what matched, never a judgement (FR-19). */
 export function matchMessage(fit: number, matched: number, required: number): string {
-  // TODO(A1). Exactly: ตรงกับทักษะของคุณ <matched> จาก <required> รายการ (<fit>%)
   return `ตรงกับทักษะของคุณ ${matched} จาก ${required} รายการ (${fit}%)` 
 }
 
 export function matchTorToUsers(tor: MatchTor, users: MatchUser[], now: Date = new Date()): MatchResult[] {
-  // TODO(A2–A4). In this order, per LEARNING-A-ingest.md:
-
-
   let matchedResult = [];
 
   // TOR level: no requiredSkills → []; biddingStatus(tor, now) === "closed" → []
