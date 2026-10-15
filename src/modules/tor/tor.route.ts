@@ -6,6 +6,7 @@ export const torRouter = Router();
 
 // Static segments before the :id route, or "stats" is read as an id.
 torRouter.get("/stats", controller.stats);
+torRouter.get("/insights", controller.insights);
 torRouter.get("/agencies", controller.agencies);
 torRouter.get("/preview", controller.preview);
 torRouter.get("/", controller.list);

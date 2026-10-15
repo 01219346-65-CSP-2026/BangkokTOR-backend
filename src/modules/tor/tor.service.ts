@@ -19,6 +19,7 @@ import {
 } from "./tor.bidding.ts";
 import { BIDDING_STAGES, type BiddingStage } from "../../lib/sources/egp/procurement.ts";
 import { buildPreviewFromRows, type PreviewInput, type PreviewRow } from "./tor.preview.ts";
+import { buildInsights, type InsightRow } from "./tor.insights.ts";
 
 import {
   TOR_CATEGORIES,
@@ -58,6 +59,9 @@ export type ListInput = {
   page: number;
   limit: number;
 };
+
+/** GET /api/tors/insights — see tor.insights.ts. */
+export type InsightsInput = { province?: string };
 
 /** Mirrors the frontend's fitBand() in src/lib/torFit.ts — keep in step. */
 export const FIT_BANDS = ["strong", "moderate", "weak"] as const;
@@ -454,5 +458,35 @@ export async function getStats() {
       .map((p) => ({ province: p._id as string, count: p.n })),
     // The budget slider's right edge.
     maxBudget: top?.budget ?? null,
+  };
+}
+
+/**
+ * The dashboard graphs (feat/116). Same publicScope as the listings page, so
+ * the dashboard and the list never disagree — see LEARNING.md for why.
+ *
+ * Projects only the seven fields buildInsights reads. A full TOR row carries
+ * `ruleFindings` and `grade`; never loading them is the FR-19 guarantee.
+ */
+export async function getInsights(input: InsightsInput) {
+  const now = new Date();
+  const filter: QueryFilter<Tor> = publicScope(now);
+  if (input.province) filter.province = input.province;
+
+  const rows = await TorModel.find(filter, {
+    _id: 0,
+    methodId: 1,
+    budget: 1,
+    province: 1,
+    agency: 1,
+    announcedAt: 1,
+    biddingStage: 1,
+    bidClosesAt: 1,
+  }).lean<InsightRow[]>();
+
+  return {
+    fiscalYear: thaiFiscalYear(now),
+    province: input.province ?? null,
+    ...buildInsights(rows, now),
   };
 }

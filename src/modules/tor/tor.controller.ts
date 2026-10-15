@@ -1,6 +1,6 @@
 import type { Request, Response } from "express";
 import * as service from "./tor.service.ts";
-import { parseListQuery, parsePreviewQuery } from "./tor.validation.ts";
+import { parseInsightsQuery, parseListQuery, parsePreviewQuery } from "./tor.validation.ts";
 
 /** Express 5 types a route param as string | string[]; a repeated :id is not
  *  a valid id, so the array form is collapsed to nothing rather than guessed. */
@@ -42,6 +42,10 @@ export async function preview(req: Request, res: Response) {
 
 export async function stats(_req: Request, res: Response) {
   res.json(await service.getStats());
+}
+
+export async function insights(req: Request, res: Response) {
+  res.json(await service.getInsights(parseInsightsQuery(req.query as Record<string, unknown>)));
 }
 
 export async function documentFile(req: Request, res: Response) {
