@@ -12,7 +12,7 @@ import { SKILL_VOCABULARY } from "../../modules/techstack/techstack.vocabulary.t
 export type SkillSlug = (typeof SKILL_VOCABULARY)[number]["slug"];
 
 /** Bump when aliases or matching change, so stale tags are findable. */
-export const SKILL_TAGGER_VERSION = 3;
+export const SKILL_TAGGER_VERSION = 4;
 
 /**
  * A plain string is matched case-insensitively. When it is ASCII it must also
@@ -170,4 +170,15 @@ export function tagSkills(sources: SkillSource[]): SkillTag[] {
   }
 
   return tags;
+}
+
+/**
+ * What the tagger reads for one TOR: the project name first (it is the most
+ * prominent text, and tagSkills keeps the first hit's quote), then the stored
+ * full text of its PDFs when there is any. A blank text adds no source.
+ */
+export function torSkillSources(projectName: string, fullText: string | null | undefined): SkillSource[] {
+  const sources: SkillSource[] = [{ text: projectName }];
+  if (fullText?.trim()) sources.push({ text: fullText });
+  return sources;
 }

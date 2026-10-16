@@ -1,9 +1,12 @@
 import type { Types } from "mongoose";
-import { SKILL_TAGGER_VERSION, tagSkills, type SkillSource } from "../../lib/skills/tagSkills.ts";
+import { SKILL_TAGGER_VERSION, tagSkills, torSkillSources } from "../../lib/skills/tagSkills.ts";
+import { TorTextModel } from "../extract/torText.model.ts";
 import { TorModel } from "./tor.model.ts";
 
 /**
- * Re-derive one TOR's keyword skill tags from its project name.
+ * Re-derive one TOR's keyword skill tags from its project name and its stored
+ * full text. A TOR with no text yet (documents_fetched) is tagged from its name
+ * alone, and re-tagged when extraction writes its tor_texts row.
  *
  * Only `source: "keyword"` entries are replaced — tags another writer added
  * survive a re-run. Returns the number of keyword tags written.
@@ -12,8 +15,9 @@ export async function tagTorSkills(torId: Types.ObjectId | string): Promise<numb
   const tor = await TorModel.findById(torId, { projectName: 1, requiredSkills: 1 }).lean();
   if (!tor) return 0;
 
-  const sources: SkillSource[] = [{ text: tor.projectName }];
-  const tags = tagSkills(sources);
+  // fullText only: the row also carries `files`, which the tagger never reads.
+  const text = await TorTextModel.findOne({ torId: tor._id }, { fullText: 1 }).lean();
+  const tags = tagSkills(torSkillSources(tor.projectName, text?.fullText));
 
   const kept = (tor.requiredSkills ?? []).filter((s) => s.source !== "keyword");
   // A slug another source already claims keeps that entry; no duplicates.
