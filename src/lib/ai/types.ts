@@ -14,13 +14,17 @@ export type RuleSpec = {
   unfairWhen?: string;
   /** Thai cue terms. Used to route rules, and quoted to the model as hints. */
   cues: string[];
+  /** True when the rule is triggered by the clause being absent. Absence checks
+   *  use the sentinel evidence string "ABSENCE" rather than a verbatim quote. */
+  absence?: boolean;
 };
 
 export type RuleFinding = {
   code: string;
   fired: boolean;
-  /** VERBATIM quote from the document. A fired finding without one is discarded
-   *  by the caller — that is what makes FR-11 enforceable rather than hoped for. */
+  /** VERBATIM quote from the document, or the sentinel "ABSENCE" for an
+   *  absence-based rule. A fired finding without one is discarded by the caller
+   *  — that is what makes FR-11 enforceable rather than hoped for. */
   evidence: string;
   /** False when the rule was never asked — none of its cues appear in the text. */
   checked: boolean;

@@ -3,6 +3,7 @@ import { createGrader, createSummarizer, sanitizeBullets } from "../../lib/ai/in
 import { isVerbatim, type RuleFinding, type SummaryBullet } from "../../lib/ai/types.ts";
 import { AI_RULES, LEGITIMACY_RULES, RULES, ruleByCode } from "../../lib/grade/rules.ts";
 import { gradeFindings, skipFairness, type Finding } from "../../lib/grade/score.ts";
+import { thaiDigitsToArabic } from "../../lib/thai/buddhistDate.ts";
 import { TorTextModel } from "../extract/torText.model.ts";
 import { recordError } from "../ingest/ingest.service.ts";
 import { GRADER_VERSION, SUMMARY_VERSION, TorModel } from "../tor/tor.model.ts";
@@ -35,7 +36,7 @@ export function checkDeterministic(
     findings.push({
       code: "IDMISMATCH",
       fired: !present,
-      evidence: tor.agency,
+      evidence: present ? tor.agency : "ABSENCE",
       checked: true,
       filename: null,
     });
@@ -48,13 +49,13 @@ export function checkDeterministic(
   // BUDGETMISMATCH — the figure should appear, allowing for Thai digit grouping
   // and the .00 the portal sometimes carries.
   if (typeof tor.budget === "number" && tor.budget > 0) {
-    const digits = haystack.replace(/[,\s]/g, "");
+      const digits = thaiDigitsToArabic(haystack).replace(/[,\s]/g, "");
     const whole = String(Math.round(tor.budget));
     const present = digits.includes(whole);
     findings.push({
       code: "BUDGETMISMATCH",
       fired: !present,
-      evidence: whole,
+      evidence: present ? whole : "ABSENCE",
       checked: true,
       filename: null,
     });
@@ -66,21 +67,28 @@ export function checkDeterministic(
 }
 
 /** Model findings -> scorer findings, dropping anything that fails the gate. */
-function toFindings(raw: RuleFinding[], text: string): Finding[] {
+export function toFindings(raw: RuleFinding[], text: string): Finding[] {
   return raw.map((f) => {
-    // Second gate. ollama.ts already discards an unverifiable quote, but this
-    // is the boundary that writes to the database, so it re-checks rather than
-    // trusting a provider to have done it. A fired rule without a real quote
-    // is downgraded to not-fired, never stored as a finding.
-    const verified = f.fired && f.checked && isVerbatim(f.evidence, text);
+    // The persistence boundary accepts verbatim quotes or an absence marker
+    // for rules that are explicitly absence-based.
+    const absenceRule = ruleByCode(f.code)?.absence === true;
+    const absenceMarker = absenceRule && f.evidence === "ABSENCE";
+    const quoteVerified = isVerbatim(f.evidence, text);
+    const evidenceVerified = absenceRule
+      ? f.fired
+        ? absenceMarker
+        : quoteVerified
+      : quoteVerified;
+    const verified = f.fired && f.checked && evidenceVerified;
+    const preserveEvidence = f.checked && evidenceVerified && (f.fired || absenceRule);
 
     return {
       code: f.code,
       fired: verified,
-      evidence: verified ? f.evidence : "",
+      evidence: preserveEvidence ? f.evidence : "",
       // A rule the router never sent anywhere was not evaluated.
       checked: f.checked,
-      filename: verified ? f.filename ?? null : null,
+      filename: preserveEvidence && !absenceMarker ? f.filename ?? null : null,
     };
   });
 }

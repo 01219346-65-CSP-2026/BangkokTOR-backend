@@ -181,4 +181,8 @@ Write your attempt first, then ask for **hints**:
 - *"Why would checking a quote with `includes` fail when the only difference is spaces? Don't give me code."*
 - *"Here's my `keepVerifiedFindings`. Which of the four cases in the comment am I handling wrong?"*
 
+<<<<<<< HEAD
 When all six criteria pass: commit, push, and open a PR. Then move on to `feat/92/tor-ai-summary`.
+=======
+When all six criteria pass: commit, push, and open a PR. Then move on to `feat/92/tor-ai-summary`.
+>>>>>>> 98e0dd2 (feat: updated rule grading to always have evidence)
