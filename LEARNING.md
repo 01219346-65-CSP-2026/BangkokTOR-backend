@@ -1,195 +1,188 @@
-# feat/116: graph dashboard (backend: the insights API)
+# feat/91: AI classification (the grading rulebook on Vertex AI)
 
-> **You write the code on this branch.** This file tells you what to build, in which order, and how you know you're done. The tests are the spec. When they're all green, the branch is finished.
+> **You write the code on this branch.** The tests are the spec. When they're all green, the branch is done.
 >
-> Jira: **SCRUM-116 Implement Graph Dashboard**. This is the backend half; the frontend half is `feat/SCRUM-116/graph-dashboard` in the frontend repo, with its own `LEARNING.md`. Do this one first, because it defines the JSON the frontend draws.
->
+> **Before you start:** bring your finished branch 90 in, since this branch needs `tor_texts`:
+> ```sh
+> git switch feat/91/ai-classification
+> git merge feat/90/pdf-extraction
+> ```
 > Setup and syntax help: [`docs/learning/`](docs/learning/README.md).
 
 ---
 
 ## Why this branch exists
 
-The customer saw two slides of TOR numbers and liked them:
+Every TOR is graded against a **rulebook** of 15 rules (`src/lib/grade/rules.ts`), for example:
+- `PENALTY`: a late-delivery fine clause (unfair when above 0.2% a day);
+- `NOENTITY`: the document doesn't require a registered company.
 
-| Slide | What it said |
-|---|---|
-| **TOR Data** | 4,557 software TORs · 77 provinces · 55% from Bangkok · 18 open for bids |
-| **Method split** | Direct award is 75% of TORs but 19% of the money; e-bidding is 17% of TORs but 59% of the money. *"Biddable tenders are fewer but larger."* |
+Two rules are checked by plain code (`IDMISMATCH`, `BUDGETMISMATCH`). Most of the rest need an AI to *read* the document.
 
-He wants that as a **live dashboard**, with more graphs. The dashboard page already has four empty chart panels waiting (`placeholderTitle: "Not built yet"` in the frontend). This branch builds the one endpoint that feeds all four:
+**Today** that AI is a small local model (Ollama). It reads one 6,000-character chunk at a time, so each TOR needs about 40 calls. A "router" (`src/lib/ai/route.ts`) guesses which chunks to send for which rule.
 
-```
-GET /api/tors/insights                       → all of Thailand
-GET /api/tors/insights?province=กรุงเทพมหานคร → Bangkok only
-```
+**Now** branch 90 gives us the whole text in one field, and Gemini can read all of it. So:
 
-### The four graphs (and why these four)
+> For each phase (legitimacy, then fairness), send **all its rules + the whole text in ONE Gemini call**, and get back one `{ code, present, quote }` per rule.
 
-Each one answers a question a software team asks before bidding:
+### The one rule you must not break: never trust the AI
 
-| # | Question | Graph | Field in the response |
-|---|---|---|---|
-| — | *How big is the market?* | 4 headline numbers (the slide he liked) | `totals` |
-| 1 | *What kind of tender is it?* (the Jira's graph 1) | two 100% bars: share **by number** vs share **by budget** | `byMethod` |
-| 2 | *How big are the contracts?* | columns per budget band, biddable part dark | `budgetBands` |
-| 3 | *Who is buying?* | ranked bars, top 8 agencies by **biddable** budget | `topAgencies` |
-| 4 | *When do tenders come out?* | columns per month, last 12 months | `byMonth` |
+The AI can invent a quote. So a rule only counts as **fired** if its quote really appears in the document (`isVerbatim` in `types.ts`). This check happens twice: once when the answer comes back (`keepVerifiedFindings`), and again before anything is saved (`grade.service.ts`). A made-up quote is thrown away, never stored.
 
-"Biddable" means **e-bidding or selection** (`methodId` `eBidding` / `competitive`). A direct award (`specific`, เฉพาะเจาะจง) never publishes an invitation, so an outside team can't bid on it. `tor.bidding.ts` has the same rule.
+### How Gemini is called
 
-### The rule you must not break: FR-19
-
-These are **market numbers**: how many, how much, where, when. The response must never carry a grade, a rule finding or a signal, and must never rank a named agency by anything but what it spends. "Agencies with the most red flags" is exactly the accusatory shape `AGENTS.md` §1 forbids. A test checks this.
-
-## The flow you're building
+With a plain `fetch`. There's no SDK and no service account. Your Vertex "express mode" key goes in the URL:
 
 ```
-GET /api/tors/insights?province=…
-  │ tor.route.ts        torRouter.get("/insights", …)   ★ step 9 (BEFORE "/:id")
-  ▼
-  │ tor.controller.ts   insights(req, res)               ★ step 9
-  ▼
-  │ tor.validation.ts   parseInsightsQuery(req.query)    ★ step 7  → { province? }
-  ▼
-  │ tor.service.ts      getInsights(input)               ★ step 8
-  │    TorModel.find(publicScope + province, 7 fields).lean()
-  ▼
-  │ tor.insights.ts     buildInsights(rows, now)         ★ steps 1–6  (pure: no database)
-  ▼
-JSON
+POST https://aiplatform.googleapis.com/v1/publishers/google/models/gemini-2.5-flash:generateContent?key=YOUR_KEY
 ```
 
-The shape is the same as the `/skills` preview (`tor.preview.ts`): **load a few thousand small rows once, do the maths in a pure function.** That function can be tested with plain arrays, with no Mongo needed. Read `tor.preview.ts` and its test once before you start.
-
-> **Why not a Mongo aggregation?** You could compute each graph with `$group`, as `getStats()` does. But that's six pipelines, and each one is only testable against a real database. The public scope is a few thousand rows of seven small fields, which is cheap to load. If the corpus grows 100×, move the heavy parts into `$group`; the tests still describe the answer.
-
-### Scope: why the numbers won't match the slide exactly
-
-`getInsights` goes through `publicScope()`, the same filter as the listings page: software TORs from **this fiscal year and last**. The slide counted the whole corpus. Using the same scope as the listings means the dashboard and the list never disagree. (A stretch goal adds an "all years" option.)
+We send a **JSON schema** along with the prompt, and Gemini is forced to answer in exactly that shape. That means there's no free text to pick apart, just `JSON.parse`.
 
 ---
 
-## Passing criteria (the branch is done when ALL of these are true)
+## Passing criteria (ALL must be true)
 
 | # | Check | Command |
 |---|---|---|
-| 1 | The insights maths is green | `bun test src/modules/tor/tor.insights.test.ts` |
-| 2 | The wiring checklist is green | `bun test checklist/116` |
-| 3 | **Every** test in the repo is green | `bun test` |
-| 4 | TypeScript is happy | `bun run typecheck` |
-| 5 | It answers over HTTP | the `curl` checks in step 10 |
+| 1 | The Vertex module spec is green | `bun test src/lib/ai/vertex.test.ts` |
+| 2 | The wiring checklist is green | `bun test checklist/91` |
+| 3 | Branch 90 is still green | `bun test checklist/90` |
+| 4 | **Every** test in the repo is green | `bun test` |
+| 5 | TypeScript is happy | `bun run typecheck` |
+| 6 | It works for real | one real TOR graded with your key (step 11) |
 
-Right now 1 and 2 fail on purpose (22 red). Work through the steps and watch them turn green.
+Tests 1–5 never call Google. They use a fake `fetch`, so they're free and don't need a key.
 
 ---
 
 ## Steps
 
-### Step 1: the helpers
+### Step 1: settings
 
-**File:** `src/modules/tor/tor.insights.ts`. The types and constants are given. Write `share`, `budgetBand`, `monthKey`, `lastMonths`.
+- `src/config/env.ts`: add `vertexApiKey` (from `VERTEX_API_KEY`, default `""`) and `vertexModel` (from `VERTEX_MODEL`, default `"gemini-2.5-flash"`).
+- `.env.example`: add `VERTEX_API_KEY=` (**empty**, because this file is committed) and `VERTEX_MODEL=gemini-2.5-flash`, with a comment on where to get a key.
+- Your own `.env`: put your real key there. `.env` is git-ignored. **Never** paste a key anywhere else.
 
-- `share(1, 3)` is `33.3`: a percent with **one decimal**.
-- `budgetBand`: lower bound inclusive, upper exclusive. `500_000` is `"500kTo5m"`.
-- `monthKey` must read the month **in Bangkok time**. `2026-01-31T20:00Z` is already February in Bangkok. `thaiFiscalYear()` in `tor.service.ts` uses the same "shift by +7h, then read UTC" trick.
-- `lastMonths(now)` is the 12 keys ending with now's month. `Date.UTC(2026, -1, 1)` is 1 December 2025, so let `Date` do the year wrap for you.
+✅ `bun test checklist/91`: step 1.
 
-✅ `bun test src/modules/tor/tor.insights.test.ts` → "step 1" (4 tests).
+### Step 2: change the types
 
-### Step 2: `buildInsights` → `totals`
+**File:** `src/lib/ai/types.ts`
 
-Write `isBiddable`, then start `buildInsights`. Return the whole `InsightsJSON` shape from the start, with placeholder values (`[]`, `0`) for the graphs you haven't reached yet, so TypeScript stays happy and the earlier tests can go green.
+- `RuleFinding`: remove `chunkIndex` and add `checked: boolean` plus `filename: string | null`.
+- `GradeInput`: becomes `{ rules, text, files }`. `text` is the full text and `files` is the `FileSpan[]` from branch 90.
+- `Grader`: rename the method from `gradeChunks(...)` to `grade(input: GradeInput)`.
 
-- `budget` sums use `row.budget ?? 0`: a TOR with no budget still counts as a TOR.
-- `provinces`: distinct, **non-empty** provinces. `new Set(...)` plus `.filter(Boolean)`.
-- `openNow`: don't re-invent the rule. Import `biddingStatus` from `tor.bidding.ts` and count `=== "open"`.
-- No rows at all must not crash, and must not divide by zero.
+Then run `bun run typecheck`. The errors it lists are your to-do list for steps 7–10.
 
-✅ "step 2" (5 tests).
+✅ `bun test checklist/91`: both step 2 checks.
 
-### Step 3: graph 1, `byMethod`
+### Step 3: `locateQuote`
 
-One slice per method, **in the order** `specific → eBidding → competitive`, each with `tors`, `budget`, `torShare`, `budgetShare`. A method with no TORs still appears at zero. `null` or unrecognised methods go into an `"unknown"` slice, listed last and **only if it has any TORs**.
+**File:** `src/lib/ai/types.ts` (the stub is at the bottom). It finds *where* a quote sits in the text, even when the spacing differs. You need this so you can tell which PDF a quote came from.
 
-Hint: a `Map` pre-filled with every method at `{ tors: 0, budget: 0 }` keeps the order and the zeros for free.
+✅ `bun test src/lib/ai/vertex.test.ts -t "step 3"`
 
-✅ "step 3" (3 tests).
+### Step 4: `callGemini` and `assertVertexConfig`
 
-### Step 4: graph 2, `budgetBands` + `unpricedTors`
+**File:** `src/lib/ai/vertex.ts`. The comment above `callGemini` shows the exact request and reply shapes. The tests replace `fetch` with a fake, so read them to see exactly what's expected. Order inside `callGemini`:
+1. `assertVertexConfig()` (throws if there's no key, so `fetch` is never reached);
+2. `fetch(url, { method: "POST", headers, body: JSON.stringify(...) , signal })`;
+3. `!response.ok` → throw (include the status, **not** the URL, because the URL contains the key);
+4. read the JSON, check `promptFeedback.blockReason` and `candidates[0].finishReason === "STOP"`;
+5. `JSON.parse` the text of `candidates[0].content.parts`, and throw a clear error if it fails.
 
-Every band in `BUDGET_BANDS` order, each with `tors` and how many are `biddable`. A `null` budget goes into `unpricedTors`, not into a band.
+✅ `bun test src/lib/ai/vertex.test.ts -t "step 4"`
 
-✅ "step 4".
+### Step 5: the three pure helpers
 
-### Step 5: graph 3, `topAgencies`
+**File:** `src/lib/ai/vertex.ts`
 
-Biddable TORs only. Group by agency, sum `tors` and `budget`, sort by budget (most first), then by count, then by name. Keep the top `TOP_AGENCIES` (8). Skip blank agencies.
+- `gradeSchema(codes)`: the answer shape. `code` must be an `enum` of `codes`, so the model can't invent rules.
+- `buildGradePrompt(rules, text)`: **define** each rule; don't just name it. We measured this on the old model: asking about a bare rule name scored 0/3, while giving the definition scored 3/3. Include the definition, `unfairWhen` and the cue words, demand a WORD-FOR-WORD quote of at most `MAX_EVIDENCE_CHARS` characters (at 200 characters the old model quoted exactly; longer quotes drifted into paraphrase), and append the whole text.
+- `keepVerifiedFindings(raw, rules, text, files)`: the gate. The comment above it lists all four cases. Loop over **your** rules, not the model's answers, so every rule gets exactly one finding.
 
-Chained tie-breakers in one comparator: `b.budget - a.budget || b.tors - a.tors || …`. This works because `0` is falsy.
+✅ `bun test src/lib/ai/vertex.test.ts -t "step 5"`
 
-✅ "step 5" (3 tests).
+### Step 6: `createVertexGrader`
 
-### Step 6: graph 4, `byMonth`
+It glues steps 4 and 5 together: one `callGemini` per `grade()`, with a timeout (`AbortController` + `setTimeout(..., env.aiTimeoutMs)`, cleared in `finally`).
 
-The 12 months from `lastMonths(now)`, zero-filled, oldest first, counting `tors` and `biddable` by `monthKey(announcedAt)`. Rows outside the window, or with no `announcedAt`, are ignored.
+✅ `bun test src/lib/ai/vertex.test.ts` is fully green.
 
-✅ "step 6" and the "FR-19" test. The whole of `tor.insights.test.ts` is green.
+### Step 7: use it
 
-### Step 7: `parseInsightsQuery`
+`src/lib/ai/index.ts` → `createGrader()` always returns `createVertexGrader()`. The summarizer keeps its `AI_PROVIDER` switch until branch 92.
 
-**File:** `src/modules/tor/tor.validation.ts`. Look at `parsePreviewQuery` for the pattern.
+### Step 8: grade the stored text
 
-- Export `parseInsightsQuery(query: Record<string, unknown>): InsightsInput`.
-- `province`: trimmed string. Blank, not a string (Express gives an **array** for `?province=a&province=b`), or longer than 64 characters → `undefined`.
-- Define `export type InsightsInput = { province?: string }` in `tor.service.ts`, next to `ListInput`, and import it here the way `ListInput` is imported.
+**File:** `src/modules/grade/grade.service.ts` → `gradeTor`
 
-✅ `bun test checklist/116` → "step 7".
+1. Remove the branch 90 "one chunk" bridge. Use `stored.fullText` and `stored.files` directly.
+2. `checkDeterministic(tor, text)` searches the full text instead of joined chunks.
+3. `grader.grade({ rules: aiRulesFor("legitimacy"), text, files })`, and the same for fairness.
+4. `toFindings(raw, text)`: the **second** gate. Re-check `isVerbatim(f.evidence, text)` and keep `checked` and `filename`.
+5. When saving `ruleFindings`, store `filename`.
+6. The summary still expects chunks until branch 92, so give it `[{ index: 0, headingPath: [], text }]` for now.
+7. Look at `findUngraded()`. Old TORs are already `"graded"` (version 1) and must be regraded **without** leaving the public list. Make it pick up both `extraction_pending` TORs and `graded` TORs whose `graderVersion` is older than the current one, but only TORs that have a `tor_texts` row (`TorTextModel.distinct("torId")`).
 
-### Step 8: `getInsights` in the service
+✅ `bun test checklist/91`: step 8.
 
-**File:** `src/modules/tor/tor.service.ts`. Model it on `previewForProfile`.
+### Step 9: storage and API
 
-1. `const filter = publicScope(now)`; if `input.province`, add `filter.province = input.province`.
-2. `TorModel.find(filter, { _id: 0, methodId: 1, budget: 1, province: 1, agency: 1, announcedAt: 1, biddingStage: 1, bidClosesAt: 1 }).lean<InsightRow[]>()`.
-   **Project only those fields.** A full TOR row carries `ruleFindings` and `grade`. Never loading them is the strongest FR-19 guarantee there is, and the checklist looks for it.
-3. Return `{ fiscalYear: thaiFiscalYear(now), province: input.province ?? null, ...buildInsights(rows, now) }`.
+- `src/modules/tor/tor.model.ts`: `GRADER_VERSION = 2`, and add `filename` to the `ruleFindings` sub-document. Keep `chunkIndex` so old rows still load.
+- `src/lib/grade/score.ts`: add `filename?: string | null` to `Finding`.
+- `src/modules/tor/tor.serialize.ts` → `serializeGrade`: include `filename` in each finding.
 
-✅ "step 8".
+✅ `bun test checklist/91`: the step 9 checks.
 
-### Step 9: controller + route
+### Step 10: clean up
 
-- `tor.controller.ts`: `export async function insights(req, res)`, which is `res.json(await service.getInsights(parseInsightsQuery(req.query as Record<string, unknown>)))`. Copy `preview`.
-- `tor.route.ts`: `torRouter.get("/insights", controller.insights)`, placed **above** `"/:id"`. Read the comment at the top of that file to see why: Express matches routes in order, so `"/:id"` would catch `insights` as an id and answer 404.
+- Delete `src/lib/ai/route.ts` and `src/lib/ai/route.test.ts`, since there are no chunks left to route.
+- In `src/lib/ai/ollama.ts`, delete the grader half (`buildPrompt`, `askOne`, `createOllamaGrader`) and keep the summarizer for now.
+- `src/grade-worker.ts`: call `assertVertexConfig()` at startup, and log `env.vertexModel`.
 
-✅ `bun test checklist/116` is fully green. `bun test` is fully green. `bun run typecheck` is clean.
+✅ `bun test`: everything green. `bun run typecheck`: no errors.
 
-### Step 10: try it over HTTP
+### Step 11: grade one real TOR
+
+You need your key in `.env` and at least one TOR with a `tor_texts` row (from branch 90).
 
 ```sh
-bun run dev    # tab 1
-curl -s localhost:8003/api/tors/insights | jq '.totals, .byMethod'
-curl -s "localhost:8003/api/tors/insights?province=$(jq -rn '"กรุงเทพมหานคร"|@uri')" | jq .totals
-curl -s localhost:8003/api/tors/insights | grep -ciE 'grade|signal'   # must print 0
+bun run dev                       # tab 1
+curl -X POST localhost:8003/api/grade/run -H 'content-type: application/json' -d '{"limit":1}'
+curl localhost:8003/api/grade/status
 ```
 
-- [ ] `totals.tors` equals `GET /api/tors/stats` → `total` (same scope, so the same number)
-- [ ] `byMethod` shares each add up to ~100
-- [ ] the Bangkok call's `bangkokShare` is `100` (or `0` when there are no rows)
-- [ ] `byMonth` has 12 entries, the last one being this month
+Then, in MongoDB Compass, open that TOR in `tors` and check:
+- [ ] `graderModel` is `vertex:gemini-2.5-flash`, and `graderVersion` is `2`
+- [ ] every fired finding has an `evidence` quote you can find (Ctrl+F) in that TOR's `tor_texts.fullText`
+- [ ] every fired finding has a `filename`
+
+Expect about 20 seconds per Gemini call. It costs money per call, so grade a handful, not hundreds, while testing.
 
 ---
 
-## Stretch (not covered by tests)
+## Something to think about (and discuss)
 
-- **All years.** Add `?years=all` to drop the fiscal-year half of `publicScope` (keep software-only and the status gate). That makes the slide's 4,557 reproducible. Write the validation test first.
-- **Cache it.** The numbers change when a worker finishes, not per request. A 5-minute in-memory cache keyed by `province` stops every dashboard view from re-reading thousands of rows.
-- **Closing soon.** A fifth graph: open TORs by days until `bidClosesAt` (≤7, 8–14, 15–30). It's the most "act now" number for a bidder.
+On a real TOR, `NOENTITY` **fired**, with the quote *"เป็นบุคคลธรรมดาหรือนิติบุคคล…"*. But that quote shows the TOR *does* ask for a juristic person, and the rule means "the requirement is **missing**".
+
+The prompt asks "does the document **contain** such a clause?", and that question doesn't fit rules that are about something being *absent*. (The old Ollama prompt had the same problem.) How would you fix it: change the rule's `definition`, add a field to `RuleSpec`, or phrase the prompt differently for absence rules? Try one, and grade the same TOR again.
 
 ---
 
 ## Using AI to help (without having it write the code for you)
 
+Write your attempt first, then ask for **hints**:
+
+- *"Here's my `callGemini` and the failing test output. What's the test expecting that I'm not doing? One sentence, no code."*
+- *"What does `AbortController` do? Give a 5-line example unrelated to my code."*
+- *"Why would checking a quote with `includes` fail when the only difference is spaces? Don't give me code."*
+- *"Here's my `keepVerifiedFindings`. Which of the four cases in the comment am I handling wrong?"*
+
+When all six criteria pass: commit, push, and open a PR. Then move on to `feat/92/tor-ai-summary`.
+=======
 Write your attempt first. When you're stuck, paste your code and **the failing test output** and ask for a *hint*:
 
 - *"Here's my `buildInsights` and the failing step 3 test. Don't fix it. Which case am I not handling?"*

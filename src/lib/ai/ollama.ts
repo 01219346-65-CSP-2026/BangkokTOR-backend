@@ -1,5 +1,4 @@
 import { env } from "../../config/env.ts";
-import { routeRules } from "./route.ts";
 import { isDescriptive } from "./summaryGuard.ts";
 import {
   isVerbatim,
@@ -37,106 +36,6 @@ const RESPONSE_SCHEMA = {
   required: ["present", "quote"],
 } as const;
 
-function buildPrompt(rule: RuleSpec, text: string): string {
-  const unfair = rule.unfairWhen
-    ? `\nMark present=true only if the clause is ALSO unfair to the contractor: ${rule.unfairWhen}`
-    : "";
-
-  return `You are reading a Thai government procurement document.
-
-DEFINITION — ${rule.code}: ${rule.definition}
-Thai terms that typically signal it: ${rule.cues.join(", ")}${unfair}
-
-present=true if such a clause appears in the text below.
-quote: copy it WORD-FOR-WORD from the text, maximum ${MAX_EVIDENCE_CHARS} characters.
-Do not translate, summarise, or rephrase. If present=false, quote must be "".
-
-TEXT:
-${text}
-`;
-}
-
-async function askOne(rule: RuleSpec, text: string, signal: AbortSignal): Promise<RuleFinding | null> {
-  const body = JSON.stringify({
-    model: env.ollamaModel,
-    messages: [{ role: "user", content: buildPrompt(rule, text) }],
-    stream: false,
-    format: RESPONSE_SCHEMA,
-    // temperature 0 for reproducibility: a grade that changes between runs on
-    // identical input is not defensible to the agency it describes.
-    options: { temperature: 0, num_ctx: 16_384 },
-  });
-
-  const response = await fetch(`${env.ollamaUrl}/api/chat`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body,
-    signal,
-  });
-
-  if (!response.ok) {
-    throw new Error(`ollama ${response.status}: ${(await response.text()).slice(0, 200)}`);
-  }
-
-  const payload = (await response.json()) as OllamaResponse;
-  if (payload.error) throw new Error(`ollama: ${payload.error}`);
-
-  let parsed: { present?: unknown; quote?: unknown };
-  try {
-    parsed = JSON.parse(payload.message?.content ?? "{}");
-  } catch {
-    // Schema-constrained output that will not parse is a model failure, not a
-    // finding. Dropping it is safer than guessing what it meant.
-    return null;
-  }
-
-  const present = parsed.present === true;
-  const quote = typeof parsed.quote === "string" ? parsed.quote.trim() : "";
-
-  // THE GATE (FR-11). A fired rule whose quote is not actually in the document
-  // is a hallucination, and it is discarded rather than stored. This is the
-  // difference between "the model said so" and "the document says so".
-  if (present && !isVerbatim(quote, text)) return null;
-
-  return {
-    code: rule.code,
-    fired: present,
-    evidence: present ? quote : "",
-    checked: true,
-  };
-}
-
-export function createOllamaGrader(): Grader {
-  return {
-    id: `ollama:${env.ollamaModel}`,
-
-    async grade(input: GradeInput): Promise<RuleFinding[]> {
-      const { routed, unrouted } = routeRules(input.rules, input.text);
-
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), env.aiTimeoutMs);
-
-      const findings: RuleFinding[] = [];
-
-      try {
-        for (const rule of routed) {
-          const finding = await askOne(rule, input.text, controller.signal);
-          if (finding) findings.push(finding);
-        }
-      } finally {
-        clearTimeout(timer);
-      }
-
-      // A rule no cue matched was never asked. It is reported as unchecked so
-      // the scorer can exclude it from the denominator — never as a pass.
-      for (const rule of unrouted) {
-        findings.push({ code: rule.code, fired: false, evidence: "", checked: false });
-      }
-
-      return findings;
-    },
-  };
-}
 
 // ---------------------------------------------------------------------------
 // Summarization

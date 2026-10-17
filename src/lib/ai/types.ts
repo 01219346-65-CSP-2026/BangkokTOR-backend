@@ -1,6 +1,8 @@
 // The grader port. Ollama implements it today; Vertex implements it later
 // without any caller changing — that swap is the whole reason this file exists.
 
+import type { FileSpan } from "../extract/fulltext";
+
 /** A rule as the model sees it. The definition is load-bearing: measured
  *  2026-09-08, asking qwen2.5:7b about a bare rule name scored 0/3, while the
  *  same question with an explicit definition scored 3/3. */
@@ -12,22 +14,28 @@ export type RuleSpec = {
   unfairWhen?: string;
   /** Thai cue terms. Used to route rules, and quoted to the model as hints. */
   cues: string[];
+  /** True when the rule is triggered by the clause being absent. Absence checks
+   *  use the sentinel evidence string "ABSENCE" rather than a verbatim quote. */
+  absence?: boolean;
 };
 
 export type RuleFinding = {
   code: string;
   fired: boolean;
-  /** VERBATIM quote from the document. A fired finding without one is discarded
-   *  by the caller — that is what makes FR-11 enforceable rather than hoped for. */
+  /** VERBATIM quote from the document, or the sentinel "ABSENCE" for an
+   *  absence-based rule. A fired finding without one is discarded by the caller
+   *  — that is what makes FR-11 enforceable rather than hoped for. */
   evidence: string;
   /** False when the rule was never asked — none of its cues appear in the text. */
   checked: boolean;
+  filename: string | null;
 };
 
 export type GradeInput = {
   rules: RuleSpec[];
   /** The TOR's full extracted text. */
   text: string;
+  files: FileSpan[];
 };
 
 export type Grader = {
@@ -86,4 +94,49 @@ export function isVerbatim(evidence: string, haystack: string): boolean {
   if (!evidence.trim()) return false;
   const strip = (s: string) => s.replace(/\s+/g, "");
   return strip(haystack).includes(strip(evidence));
+}
+
+/**
+ * TODO(feat/91) — see LEARNING.md step 3.
+ *
+ * WHERE in `haystack` does `quote` start? Same whitespace-insensitive match as
+ * isVerbatim above, but return the character POSITION in the ORIGINAL
+ * haystack, or -1 when not found (or when the quote is blank).
+ *
+ * Hints:
+ *   - Try haystack.indexOf(quote) first — usually that is enough.
+ *   - If it misses, the difference is whitespace. Walk the haystack one
+ *     character at a time, building a copy WITHOUT whitespace, and remember
+ *     for each kept character where it was in the original (an array of
+ *     numbers). Find the stripped quote in the stripped copy, then use that
+ *     array to translate the position back.
+ */
+export function locateQuote(quote: string, haystack: string): number {
+  const strip = (s: string) => s.replace(/\s+/g, "");
+
+  if (!quote.trim()) 
+    return -1;
+
+  // better optimized if enabled, but misses a non significant edge case.
+  /*const a = haystack.indexOf(quote);
+  if (a !== -1) 
+    return a;*/
+  
+  const strippedChars: string[] = [];
+  const originalIndexes: number[] = [];
+
+  for (let i = 0; i < haystack.length; i++) {
+    if (!/\s/.test(haystack.charAt(i))) {
+      strippedChars.push(haystack.charAt(i));
+      originalIndexes.push(i);
+    }
+  }
+
+  const strippedText = strippedChars.join("");
+  const strippedIndex = strippedText.indexOf(strip(quote));
+
+  if (strippedIndex === -1) return -1;
+  else {
+    return originalIndexes[strippedIndex] ?? -1;
+  }
 }
