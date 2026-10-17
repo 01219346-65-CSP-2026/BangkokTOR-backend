@@ -3,7 +3,9 @@ import {
   BANGKOK,
   BUDGET_BANDS,
   TOP_AGENCIES,
+  TOP_WINNERS,
   budgetBand,
+  buildByDistrict,
   buildInsights,
   lastMonths,
   monthKey,
@@ -222,6 +224,78 @@ describe("step 6: graph 4 — TORs announced per month", () => {
     expect(byMonth.find((m) => m.month === "2026-09")).toEqual({ month: "2026-09", tors: 2, biddable: 1 });
     expect(byMonth.at(-1)).toEqual({ month: "2026-10", tors: 1, biddable: 1 });
     expect(byMonth[0]).toEqual({ month: "2025-11", tors: 0, biddable: 0 });
+  });
+});
+
+describe("step 7: graph 5 — the Bangkok district map", () => {
+  const bkk = (over: Partial<InsightRow>) => row({ district: "หลักสี่", workTypes: ["development"], winnerName: "A Co.", ...over });
+
+  test("one entry per khet code, Bangkok only, code order", () => {
+    const rows = [
+      bkk({ district: "จตุจักร" }),
+      bkk({ district: "เขตหลักสี่" }),
+      bkk({}),
+      bkk({ province: "เชียงใหม่", district: "หลักสี่" }), // not Bangkok: ignored, not "unmatched"
+    ];
+    const { byDistrict } = buildByDistrict(rows);
+    expect(byDistrict.map((d) => [d.code, d.tors])).toEqual([["30", 1], ["41", 2]]);
+  });
+
+  test("missing or non-Bangkok เขต is counted as unmatched", () => {
+    const { byDistrict, unmatchedDistrictTors } = buildByDistrict([
+      bkk({ district: null }),
+      bkk({ district: "ตรอน" }),
+      bkk({}),
+    ]);
+    expect(unmatchedDistrictTors).toBe(2);
+    expect(byDistrict).toHaveLength(1);
+  });
+
+  test("dominant work type by TOR count; a tie goes to the bigger budget", () => {
+    const { byDistrict } = buildByDistrict([
+      bkk({ workTypes: ["maintenance"], budget: 9_000_000 }),
+      bkk({ workTypes: ["development"], budget: 1_000_000 }),
+      bkk({ workTypes: ["development", "aiData"], budget: 1_000_000 }),
+      bkk({ workTypes: ["maintenance"], budget: 9_000_000 }),
+    ]);
+    const d = byDistrict[0]!;
+    expect(d.dominantWorkType).toBe("maintenance");
+    expect(d.workTypes.map((t) => [t.id, t.tors, t.share])).toEqual([
+      ["maintenance", 2, 50],
+      ["development", 2, 50],
+      ["aiData", 1, 25],
+    ]);
+    expect(d.budget).toBe(20_000_000);
+  });
+
+  test("no work types reads as other", () => {
+    const { byDistrict } = buildByDistrict([bkk({ workTypes: [] }), bkk({ workTypes: null })]);
+    expect(byDistrict[0]!.dominantWorkType).toBe("other");
+  });
+
+  test("top winners: most wins, then most money, at most TOP_WINNERS", () => {
+    const { byDistrict } = buildByDistrict([
+      bkk({ winnerName: "A Co.", budget: 1 }),
+      bkk({ winnerName: "A Co.", budget: 1 }),
+      bkk({ winnerName: "B Co.", budget: 5 }),
+      bkk({ winnerName: "C Co.", budget: 9 }),
+      bkk({ winnerName: " D  Co. ", budget: 4 }),
+      bkk({ winnerName: "D Co.", budget: 3 }),
+      bkk({ winnerName: null }),
+    ]);
+    const winners = byDistrict[0]!.topWinners;
+    expect(winners).toHaveLength(TOP_WINNERS);
+    expect(winners).toEqual([
+      { name: "D Co.", wins: 2, budget: 7 },
+      { name: "A Co.", wins: 2, budget: 2 },
+      { name: "C Co.", wins: 1, budget: 9 },
+    ]);
+  });
+
+  test("buildInsights carries it", () => {
+    const out = buildInsights([bkk({})], NOW);
+    expect(out.byDistrict).toHaveLength(1);
+    expect(out.unmatchedDistrictTors).toBe(0);
   });
 });
 

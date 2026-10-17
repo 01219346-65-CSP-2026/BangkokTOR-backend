@@ -492,6 +492,9 @@ export async function getInsights(input: InsightsInput) {
     announcedAt: 1,
     biddingStage: 1,
     bidClosesAt: 1,
+    district: 1,
+    workTypes: 1,
+    winnerName: 1,
   }).lean<InsightRow[]>();
 
   return {
