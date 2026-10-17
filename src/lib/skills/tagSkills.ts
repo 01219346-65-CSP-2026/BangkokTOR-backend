@@ -171,3 +171,14 @@ export function tagSkills(sources: SkillSource[]): SkillTag[] {
 
   return tags;
 }
+
+/**
+ * What the tagger reads for one TOR: the project name first (it is the most
+ * prominent text, and tagSkills keeps the first hit's quote), then the stored
+ * full text of its PDFs when there is any. A blank text adds no source.
+ */
+export function torSkillSources(projectName: string, fullText: string | null | undefined): SkillSource[] {
+  const sources: SkillSource[] = [{ text: projectName }];
+  if (fullText?.trim()) sources.push({ text: fullText });
+  return sources;
+}

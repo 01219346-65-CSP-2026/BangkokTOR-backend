@@ -13,7 +13,8 @@ import { tagTorSkills } from "./modules/tor/tor.skills.ts";
 //
 // New TORs are tagged by extraction (extract.service.ts processBundle); this
 // covers the ones extracted before tagging existed, and those still waiting on
-// documents, which are tagged from their project name alone.
+// documents, which are tagged from their project name alone. Extracted TORs
+// are tagged from their name plus their stored full text (tor_texts).
 
 const apply = process.argv.includes("--apply");
 const all = process.argv.includes("--all");
