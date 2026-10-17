@@ -1,4 +1,5 @@
 import { Schema, model, Types, type InferSchemaType, type HydratedDocument } from 'mongoose';
+import { WORK_TYPES } from '../../lib/classify/workType.ts';
 
 
 const userSchema = new Schema({
@@ -30,6 +31,9 @@ const userSchema = new Schema({
     duration: { type: String, enum: ['short', 'medium', 'long', 'veryLong'] },
     // How many contracts the team can run at once.
     concurrent: Number,
+    // The wizard's first question — what kinds of TOR they are after. Same
+    // values as a TOR's `workTypes`, so it can drive the listing's filter.
+    work_types: [{ type: String, enum: WORK_TYPES }],
     notify: {
       on_match: Boolean,
       only_strong_fit: Boolean,

@@ -18,6 +18,8 @@ import {
   type BiddingStatus,
 } from "./tor.bidding.ts";
 import { BIDDING_STAGES, type BiddingStage } from "../../lib/sources/egp/procurement.ts";
+import { buildPreviewFromRows, type PreviewInput, type PreviewRow } from "./tor.preview.ts";
+import { buildInsights, type InsightRow } from "./tor.insights.ts";
 
 import {
   TOR_CATEGORIES,
@@ -57,6 +59,9 @@ export type ListInput = {
   page: number;
   limit: number;
 };
+
+/** GET /api/tors/insights — see tor.insights.ts. */
+export type InsightsInput = { province?: string };
 
 /** Mirrors the frontend's fitBand() in src/lib/torFit.ts — keep in step. */
 export const FIT_BANDS = ["strong", "moderate", "weak"] as const;
@@ -290,6 +295,39 @@ async function listScored(filter: QueryFilter<Tor>, input: ListInput, skills: st
   };
 }
 
+/**
+ * The /skills live preview over every open TOR — see tor.preview.ts. "Open"
+ * only, not the list's default open + upcoming: the preview promises TORs a
+ * team can bid on today.
+ */
+export async function previewForProfile(input: PreviewInput) {
+  const now = new Date();
+  const filter: QueryFilter<Tor> = publicScope(now);
+  const open = biddingFilterFor(["open"], now);
+  if (open) filter.$and = [open as QueryFilter<Tor>];
+
+  const docs = await TorModel.find(filter, {
+    projectName: 1,
+    agency: 1,
+    budget: 1,
+    bidClosesAt: 1,
+    "requiredSkills.slug": 1,
+  })
+    .lean()
+    .exec();
+
+  const rows: PreviewRow[] = docs.map((d) => ({
+    id: String(d._id),
+    title: d.projectName,
+    agency: d.agency || null,
+    budget: d.budget ?? null,
+    bidClosesAt: d.bidClosesAt ?? null,
+    skills: (d.requiredSkills ?? []).map((s) => s.slug).filter((s): s is string => !!s),
+  }));
+
+  return buildPreviewFromRows(rows, input);
+}
+
 export async function getTor(id: string) {
   if (!isValidObjectId(id)) return null;
   const tor = await TorModel.findOne({ _id: id, ...publicScope() }).lean();
@@ -420,5 +458,35 @@ export async function getStats() {
       .map((p) => ({ province: p._id as string, count: p.n })),
     // The budget slider's right edge.
     maxBudget: top?.budget ?? null,
+  };
+}
+
+/**
+ * The dashboard graphs (feat/116). Same publicScope as the listings page, so
+ * the dashboard and the list never disagree — see LEARNING.md for why.
+ *
+ * Projects only the seven fields buildInsights reads. A full TOR row carries
+ * `ruleFindings` and `grade`; never loading them is the FR-19 guarantee.
+ */
+export async function getInsights(input: InsightsInput) {
+  const now = new Date();
+  const filter: QueryFilter<Tor> = publicScope(now);
+  if (input.province) filter.province = input.province;
+
+  const rows = await TorModel.find(filter, {
+    _id: 0,
+    methodId: 1,
+    budget: 1,
+    province: 1,
+    agency: 1,
+    announcedAt: 1,
+    biddingStage: 1,
+    bidClosesAt: 1,
+  }).lean<InsightRow[]>();
+
+  return {
+    fiscalYear: thaiFiscalYear(now),
+    province: input.province ?? null,
+    ...buildInsights(rows, now),
   };
 }

@@ -3,9 +3,13 @@ import { HttpError } from "../../middleware/errors.ts";
 import { UserModel } from "../user/user.model.ts";
 import { TechstackModel } from "../techstack/techstack.model.ts";
 import type { Duration, ProfilePutBody, TeamSizeBand } from "./me.validation.ts";
+import type { WorkTypeId } from "../../lib/classify/workType.ts";
 
 /** What GET and PUT /api/me/profile return. The frontend maps it in src/api/profile.ts. */
-export type ProfileJSON = ProfilePutBody & { updated_at: string };
+export type ProfileJSON = Omit<ProfilePutBody, "work_types"> & {
+  work_types: WorkTypeId[];
+  updated_at: string;
+};
 
 type StoredProfile = {
   budget_min?: number | null;
@@ -13,6 +17,7 @@ type StoredProfile = {
   team_size_band?: TeamSizeBand | null;
   duration?: Duration | null;
   concurrent?: number | null;
+  work_types?: WorkTypeId[] | null;
   notify?: { on_match?: boolean; only_strong_fit?: boolean; include_signals?: boolean } | null;
   updated_at?: Date | null;
   tech_stacks?: {
@@ -57,6 +62,7 @@ export async function getProfile(userId: string): Promise<ProfileJSON | null> {
     concurrent: profile.concurrent ?? 1,
     budget_min: profile.budget_min ?? 0,
     budget_max: profile.budget_max ?? null,
+    work_types: profile.work_types ?? [],
     notify: {
       on_match: profile.notify?.on_match ?? true,
       only_strong_fit: profile.notify?.only_strong_fit ?? true,
@@ -113,6 +119,7 @@ export async function putProfile(userId: string, input: ProfilePutBody): Promise
         "profile.budget_max": input.budget_max,
         "profile.notify": input.notify,
         "profile.updated_at": new Date(),
+        ...(input.work_types !== undefined && { "profile.work_types": input.work_types }),
       },
     },
     { runValidators: true },

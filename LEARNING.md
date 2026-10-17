@@ -181,8 +181,13 @@ Write your attempt first, then ask for **hints**:
 - *"Why would checking a quote with `includes` fail when the only difference is spaces? Don't give me code."*
 - *"Here's my `keepVerifiedFindings`. Which of the four cases in the comment am I handling wrong?"*
 
-<<<<<<< HEAD
 When all six criteria pass: commit, push, and open a PR. Then move on to `feat/92/tor-ai-summary`.
 =======
-When all six criteria pass: commit, push, and open a PR. Then move on to `feat/92/tor-ai-summary`.
->>>>>>> 98e0dd2 (feat: updated rule grading to always have evidence)
+Write your attempt first. When you're stuck, paste your code and **the failing test output** and ask for a *hint*:
+
+- *"Here's my `buildInsights` and the failing step 3 test. Don't fix it. Which case am I not handling?"*
+- *"Why does `new Date(Date.UTC(2026, -1, 1))` give December 2025? Tiny example, not my code."*
+- *"My sort comparator gives the wrong order on ties. Point to the line, don't rewrite it."*
+- *"Explain why `torRouter.get('/:id')` above `/insights` makes `/insights` 404."*
+
+When all five passing criteria hold, commit, push, and open a PR into `main`. Then do the frontend half.

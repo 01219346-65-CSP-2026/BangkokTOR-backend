@@ -1,7 +1,8 @@
 import { WORK_TYPES, type WorkTypeId } from "../../lib/classify/workType.ts";
 import { SKILL_VOCABULARY } from "../techstack/techstack.vocabulary.ts";
 import { TOR_CATEGORIES, TOR_METHODS, TOR_SORTS } from "./tor.model.ts";
-import { FIT_BANDS, type FitBand, type ListInput } from "./tor.service.ts";
+import { FIT_BANDS, type FitBand, type InsightsInput, type ListInput } from "./tor.service.ts";
+import type { PreviewInput } from "./tor.preview.ts";
 import { BIDDING_STATUSES, type BiddingStatus } from "./tor.bidding.ts";
 import { BIDDING_STAGES, type BiddingStage } from "../../lib/sources/egp/procurement.ts";
 
@@ -118,5 +119,28 @@ export function parseListQuery(query: Record<string, unknown>): ListInput {
     bidding: bidding(query.bidding),
     page,
     limit,
+  };
+}
+
+const MAX_PROVINCE_LENGTH = 64;
+
+/** GET /api/tors/insights. A blank, array, or overlong province is no province. */
+export function parseInsightsQuery(query: Record<string, unknown>): InsightsInput {
+  const value = query.province;
+  const province =
+    typeof value === "string" && value.trim() && value.trim().length <= MAX_PROVINCE_LENGTH
+      ? value.trim()
+      : undefined;
+  return { province };
+}
+
+/** GET /api/tors/preview. A missing or odd seed still gets a stable pick. */
+export function parsePreviewQuery(query: Record<string, unknown>): PreviewInput {
+  const seed = typeof query.seed === "string" ? query.seed.slice(0, 32) : "";
+  return {
+    skills: skills(query.skills) ?? [],
+    minBudget: num(query.minBudget),
+    maxBudget: num(query.maxBudget),
+    seed,
   };
 }

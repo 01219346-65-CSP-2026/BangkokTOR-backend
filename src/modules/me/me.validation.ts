@@ -1,5 +1,6 @@
 import { HttpError } from "../../middleware/errors.ts";
 import { SKILL_VOCABULARY } from "../techstack/techstack.vocabulary.ts";
+import { WORK_TYPES, type WorkTypeId } from "../../lib/classify/workType.ts";
 import {
   asObject,
   readBoolean,
@@ -35,6 +36,11 @@ export type ProfilePutBody = {
     only_strong_fit: boolean;
     include_signals: boolean;
   };
+  /**
+   * The kinds of TOR the reader is after; [] = not answered. Optional so a
+   * client that predates the question doesn't erase the stored answer.
+   */
+  work_types?: WorkTypeId[];
 };
 
 // The whole vocabulary — a profile can claim every skill, never more.
@@ -77,6 +83,19 @@ function readBudgetMax(src: Record<string, unknown>): number | null {
   return required(readNumber(src, "budget_max", 0), "budget_max");
 }
 
+/** Absent → undefined (leave the stored answer alone), else a list of work types. */
+function readWorkTypes(src: Record<string, unknown>): WorkTypeId[] | undefined {
+  const value = src.work_types;
+  if (value === undefined) return undefined;
+  if (
+    !Array.isArray(value) ||
+    !value.every((entry) => WORK_TYPES.includes(entry as WorkTypeId))
+  ) {
+    throw new HttpError(400, `"work_types" must be a list of: ${WORK_TYPES.join(", ")}`);
+  }
+  return [...new Set(value as WorkTypeId[])];
+}
+
 export function parseProfilePut(body: unknown): ProfilePutBody {
   const src = asObject(body);
   const notify = asObject(src.notify ?? null);
@@ -99,6 +118,9 @@ export function parseProfilePut(body: unknown): ProfilePutBody {
       include_signals: required(readBoolean(notify, "include_signals"), "notify.include_signals"),
     },
   };
+
+  const workTypes = readWorkTypes(src);
+  if (workTypes !== undefined) parsed.work_types = workTypes;
 
   // A range that excludes everything is a mistake worth naming, not storing.
   if (parsed.budget_max !== null && parsed.budget_min > parsed.budget_max) {
