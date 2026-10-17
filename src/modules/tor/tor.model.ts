@@ -15,8 +15,8 @@ export const TOR_CATEGORIES = [
 export const TOR_CONTRACTS = ["purchase", "hire", "construction", "lease"] as const;
 export const TOR_METHODS = ["eBidding", "specific", "competitive"] as const;
 // `bestMatch` needs the caller's skills (ListInput.skills); without them it
-// falls back to `closingSoon`, the default — see tor.service.ts listTors.
-export const TOR_SORTS = ["closingSoon", "newest", "oldest", "budgetHigh", "budgetLow", "bestMatch"] as const;
+// falls back to `mostTimeLeft`, the default — see tor.service.ts listTors.
+export const TOR_SORTS = ["mostTimeLeft", "closingSoon", "newest", "oldest", "budgetHigh", "budgetLow", "bestMatch"] as const;
 export const SKILL_TAG_SOURCES = ["keyword", "llm"] as const;
 export const TOR_STATUS_IDS = [
   "inProgress", "contracted", "deliveredOnTime", "deliveredComplete", "contractEnded",
