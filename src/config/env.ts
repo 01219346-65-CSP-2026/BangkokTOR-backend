@@ -118,6 +118,31 @@ export const env = {
 
   // Max amount of characters to extract from tor before truncating.
   maxFulltextChars: Number(process.env.MAX_FULLTEXT_CHARS ?? 400_000),
+
+  // Match-notification email (SCRUM-77). Unset RESEND_API_KEY means the
+  // console mailer runs instead — a laptop with no key still sends "mail",
+  // just to the log. mailFrom must be a domain verified with Resend in prod.
+  resendApiKey: process.env.RESEND_API_KEY ?? "",
+  mailFrom: process.env.MAIL_FROM ?? "BangkokTOR <notifications@bangkoktor.example>",
+  // Explicit, not inferred from which credentials happen to be set — so
+  // createMailer()'s resend-or-console default never changes underneath
+  // someone who's just added Gmail credentials for local testing.
+  // "resend" | "gmail" | unset (resend-if-key-else-console, the default).
+  mailProvider: process.env.MAIL_PROVIDER ?? "",
+  // Gmail SMTP via Nodemailer — an alternative to Resend that needs no
+  // verified domain (it sends as your own Gmail address), for testing real
+  // delivery before a domain exists. Requires a Gmail "app password", not
+  // your real password: myaccount.google.com/apppasswords (needs 2FA on).
+  gmailUser: process.env.GMAIL_USER ?? "",
+  gmailAppPassword: process.env.GMAIL_APP_PASSWORD ?? "",
+  // Where the links inside a match email point — the FRONTEND's origin, not
+  // this API's. No trailing slash required; buildMatchDigest strips it.
+  appUrl: process.env.APP_URL ?? "http://localhost:3003",
+  // How often email-worker checks for pending notifications.
+  emailIntervalMs: Number(process.env.EMAIL_INTERVAL_MS ?? 60_000),
+  // Pending rows read per pass — bounds how many Resend calls (and how much
+  // memory) one pass can cost.
+  emailBatchSize: Number(process.env.EMAIL_BATCH_SIZE ?? 100),
 } as const;
 
 export const isProduction = env.nodeEnv === "production";
