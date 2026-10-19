@@ -9,6 +9,14 @@ export const ingestRouter = Router();
 // and gated on the shared secret. Status is a cheap read and only needs the
 // poll budget — mounting the run limit on the whole router would have capped
 // the admin UI's status polling at two calls an hour.
+//
+// Neither /run nor /capture goes through requireUser/requireRole: /run has no
+// HTTP caller at all (the discover CLI calls the service directly, see
+// src/discover.ts), and /capture is called cross-origin by the egp-capture
+// Chrome extension (tools/egp-capture), which never holds a signed-in session
+// or an internal JWT — only the shared admin token (see middleware/cors.ts
+// CAPTURE_PATH). Neither is reachable through the admin web panel's session
+// flow, so they are not part of the role-gating in this change.
 ingestRouter.post("/run", runLimit, requireAdminToken, controller.startRun);
 ingestRouter.get("/status", pipelineLimit, controller.status);
 // Project ids from e-GP's search, sent by the capture extension (tools/egp-capture).
