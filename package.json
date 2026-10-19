@@ -12,6 +12,7 @@
     "test": "bun test",
     "extract-worker": "bun run src/extract-worker.ts",
     "grade-worker": "bun run src/grade-worker.ts",
+    "email-worker": "bun run src/email-worker.ts",
     "backfill-pdfs": "bun run src/backfill-pdfs.ts",
     "backfill-skills": "bun run src/backfill-skills.ts",
     "purge-out-of-scope": "bun run src/purge-out-of-scope.ts",
@@ -26,7 +27,8 @@
   },
   "devDependencies": {
     "@types/bun": "latest",
-    "@types/express": "^5.0.6"
+    "@types/express": "^5.0.6",
+    "@types/nodemailer": "^8.0.2"
   },
   "peerDependencies": {
     "typescript": "^5"
@@ -34,6 +36,7 @@
   "dependencies": {
     "@opendataloader/pdf": "^2.5.7",
     "express": "^5.2.1",
-    "mongoose": "^9.9.4"
+    "mongoose": "^9.9.4",
+    "nodemailer": "^10.1.1"
   }
 }

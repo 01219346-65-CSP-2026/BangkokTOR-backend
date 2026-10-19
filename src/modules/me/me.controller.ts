@@ -1,6 +1,7 @@
 import type { RequestHandler } from "express";
 import * as service from "./me.service.ts";
 import * as bookmarks from "../bookmark/bookmark.service.ts";
+import * as notifications from "../notification/notification.service.ts";
 import { parseProfilePut } from "./me.validation.ts";
 
 // `res.locals.userId` is set by requireUser, which every route in this module
@@ -42,4 +43,13 @@ export const putBookmark: RequestHandler = async (req, res) => {
 export const deleteBookmark: RequestHandler = async (req, res) => {
   await bookmarks.removeBookmark(userIdOf(res), torIdOf(req));
   res.status(204).end();
+};
+
+export const listNotifications: RequestHandler = async (req, res) => {
+  const limit = req.query.limit === undefined ? undefined : Number(req.query.limit);
+  res.json({ items: await notifications.listMyNotifications(userIdOf(res), limit) });
+};
+
+export const markNotificationRead: RequestHandler = async (req, res) => {
+  res.json(await notifications.markMyNotificationRead(userIdOf(res), String(req.params.id)));
 };
