@@ -31,7 +31,7 @@ function method(value: unknown): TorMethod | undefined {
     : undefined;
 }
 
-/** An unrecognised sort falls back to the service's default (closingSoon) rather
+/** An unrecognised sort falls back to the service's default (mostTimeLeft) rather
  *  than erroring — same reasoning as an unknown category. */
 function sort(value: unknown): TorSort | undefined {
   return typeof value === "string" && (TOR_SORTS as readonly string[]).includes(value)

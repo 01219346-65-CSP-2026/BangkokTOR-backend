@@ -10,6 +10,7 @@ import {
   CLOSING_SOON_FIELDS,
   CLOSING_SOON_SORT,
   DEFAULT_BIDDING,
+  HIDE_UNDATED_OPEN,
   biddingFilter,
   biddingFilterFor,
   closingSoonStages,
@@ -72,15 +73,19 @@ const FIT_RANGES: Record<FitBand, { $gte: number; $lt?: number }> = {
   weak: { $gte: 0, $lt: 40 },
 };
 
-/** `closingSoon` is the default: the site exists to show what can still be
- *  bid on, soonest deadline first (tor.bidding.ts closingSoonStages).
+/** `mostTimeLeft` is the default: the site exists to show what can still be
+ *  bid on, and a team needs time to prepare a bid, so the open TORs with the
+ *  furthest deadline lead. `closingSoon` is the reverse (tor.bidding.ts
+ *  closingSoonStages for both).
  *
  *  `bestMatch` only means something on the scored path (listScored); a caller
- *  that asks for it without skills gets `closingSoon`. Rows with no tagged
+ *  that asks for it without skills gets `mostTimeLeft`. Rows with no tagged
  *  skills have a null fitScore, which sorts below every number, so they come
  *  last. */
 type TorSort = (typeof TOR_SORTS)[number];
-const SORTS: Record<Exclude<TorSort, "closingSoon">, Record<string, 1 | -1>> = {
+type DeadlineSort = "mostTimeLeft" | "closingSoon";
+const DEFAULT_SORT: DeadlineSort = "mostTimeLeft";
+const SORTS: Record<Exclude<TorSort, DeadlineSort>, Record<string, 1 | -1>> = {
   newest: { announcedAt: -1 },
   oldest: { announcedAt: 1 },
   budgetHigh: { budget: -1 },
@@ -138,6 +143,8 @@ export async function listTors(input: ListInput) {
   const and: QueryFilter<Tor>[] = [];
   const bidding = biddingFilterFor(input.bidding ?? DEFAULT_BIDDING, now);
   if (bidding) and.push(bidding as QueryFilter<Tor>);
+  // Open with no readable deadline: hidden from the website (tor.bidding.ts).
+  and.push(HIDE_UNDATED_OPEN as QueryFilter<Tor>);
 
   /*
    * What counts as a result.
@@ -192,7 +199,7 @@ export async function listTors(input: ListInput) {
   if (input.skills?.length) return listScored(filter, input, input.skills, now);
 
   const skip = (input.page - 1) * input.limit;
-  const sortKey = input.sort === "bestMatch" || !input.sort ? "closingSoon" : input.sort;
+  const sortKey = input.sort === "bestMatch" || !input.sort ? DEFAULT_SORT : input.sort;
 
   const [rows, total] = await Promise.all([
     TorModel.aggregate<TorLean>([
@@ -215,11 +222,11 @@ export async function listTors(input: ListInput) {
 
 type ScoredRow = TorLean & { fitScore: number | null; matchedSkillCount: number };
 
-/** $sort, plus the computed keys `closingSoon` needs — removed again after. */
+/** $sort, plus the computed keys the deadline orders need — removed again after. */
 function sortStages(sort: TorSort, now: Date): PipelineStage.FacetPipelineStage[] {
-  if (sort === "closingSoon") {
+  if (sort === "closingSoon" || sort === "mostTimeLeft") {
     return [
-      ...(closingSoonStages(now) as PipelineStage.AddFields[]),
+      ...(closingSoonStages(now, sort === "closingSoon" ? "soonest" : "latest") as PipelineStage.AddFields[]),
       { $sort: { ...CLOSING_SOON_SORT } },
       { $unset: CLOSING_SOON_FIELDS },
     ];
@@ -274,7 +281,7 @@ async function listScored(filter: QueryFilter<Tor>, input: ListInput, skills: st
     ...bands,
     {
       $facet: {
-        items: [...sortStages(input.sort ?? "closingSoon", now), { $skip: skip }, { $limit: input.limit }],
+        items: [...sortStages(input.sort ?? DEFAULT_SORT, now), { $skip: skip }, { $limit: input.limit }],
         total: [{ $count: "n" }],
       },
     },
@@ -304,7 +311,7 @@ export async function previewForProfile(input: PreviewInput) {
   const now = new Date();
   const filter: QueryFilter<Tor> = publicScope(now);
   const open = biddingFilterFor(["open"], now);
-  if (open) filter.$and = [open as QueryFilter<Tor>];
+  if (open) filter.$and = [open as QueryFilter<Tor>, HIDE_UNDATED_OPEN as QueryFilter<Tor>];
 
   const docs = await TorModel.find(filter, {
     projectName: 1,
@@ -402,7 +409,10 @@ export async function getStats() {
   const byBidding = Promise.all(
     BIDDING_STATUSES.map(async (status) => ({
       status,
-      count: await TorModel.countDocuments({ ...scope, $and: [biddingFilter(status, now) as QueryFilter<Tor>] }),
+      count: await TorModel.countDocuments({
+        ...scope,
+        $and: [biddingFilter(status, now) as QueryFilter<Tor>, HIDE_UNDATED_OPEN as QueryFilter<Tor>],
+      }),
     })),
   );
 
@@ -482,6 +492,9 @@ export async function getInsights(input: InsightsInput) {
     announcedAt: 1,
     biddingStage: 1,
     bidClosesAt: 1,
+    district: 1,
+    workTypes: 1,
+    winnerName: 1,
   }).lean<InsightRow[]>();
 
   return {

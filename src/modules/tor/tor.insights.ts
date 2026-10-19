@@ -1,4 +1,5 @@
 import { biddingStatus } from "./tor.bidding.ts";
+import { normalizeBangkokDistrict } from "../../lib/geo/bangkokDistricts.ts";
 
 // The dashboard's insight graphs, computed from the listed TORs.
 //
@@ -21,6 +22,10 @@ export type InsightRow = {
   announcedAt: Date | null;
   biddingStage: string | null;
   bidClosesAt: Date | null;
+  /** เขต of the PROJECT (national feeds only — BMA portal rows carry none). */
+  district?: string | null;
+  workTypes?: string[] | null;
+  winnerName?: string | null;
 };
 
 export const BANGKOK = "กรุงเทพมหานคร";
@@ -34,6 +39,7 @@ export const BUDGET_BANDS = ["under500k", "500kTo5m", "5mTo50m", "over50m"] as c
 export type BudgetBand = (typeof BUDGET_BANDS)[number];
 
 export const TOP_AGENCIES = 8;
+export const TOP_WINNERS = 3;
 export const MONTHS = 12;
 
 export type MethodSlice = {
@@ -66,6 +72,24 @@ export type InsightsJSON = {
   unpricedTors: number;
   topAgencies: Array<{ agency: string; tors: number; budget: number }>;
   byMonth: Array<{ month: string; tors: number; biddable: number }>;
+  /** Graph 5: the Bangkok map — one entry per khet with any TOR, by code. */
+  byDistrict: DistrictSummary[];
+  /** Bangkok TORs whose เขต is missing or isn't one of the 50 — left off the map. */
+  unmatchedDistrictTors: number;
+};
+
+export type DistrictSummary = {
+  /** BMA district code, "01"–"50" (lib/geo/bangkokDistricts.ts). */
+  code: string;
+  tors: number;
+  budget: number;
+  /** The work type on the most TORs here; ties go to the bigger budget. */
+  dominantWorkType: string;
+  /** Every work type present, most TORs first. A TOR can carry several, so
+   *  the shares (percent of this district's TORs) can sum past 100. */
+  workTypes: Array<{ id: string; tors: number; budget: number; share: number }>;
+  /** Who won the most contracts here, most wins first, then most money. */
+  topWinners: Array<{ name: string; wins: number; budget: number }>;
 };
 
 const BANGKOK_OFFSET_MS = 7 * 3_600_000;
@@ -246,5 +270,83 @@ export function buildInsights(rows: InsightRow[], now: Date = new Date()): Insig
   }
   const byMonth = months.map((month) => ({ month, ...monthCounts.get(month)! }));
 
-  return { totals, byMethod, budgetBands, unpricedTors, topAgencies, byMonth };
+  const { byDistrict, unmatchedDistrictTors } = buildByDistrict(rows);
+
+  return { totals, byMethod, budgetBands, unpricedTors, topAgencies, byMonth, byDistrict, unmatchedDistrictTors };
+}
+
+// ─── Graph 5: the Bangkok district map ─────────────────────────────────────
+
+type Tally = { tors: number; budget: number };
+
+/** Highest count first, then budget, then id — a stable order for ties. */
+const byWeight = <T extends Tally>(key: (t: T) => string) => (a: T, b: T) =>
+  b.tors - a.tors || b.budget - a.budget || key(a).localeCompare(key(b));
+
+/**
+ * Where in Bangkok each kind of work is bought, and who wins it there.
+ *
+ * FR-19: winners are counted by contracts won, which is the public award
+ * record — not judged. Agencies don't appear here at all.
+ */
+export function buildByDistrict(rows: InsightRow[]): Pick<InsightsJSON, "byDistrict" | "unmatchedDistrictTors"> {
+  type Acc = Tally & { workTypes: Map<string, Tally>; winners: Map<string, Tally> };
+  const districts = new Map<string, Acc>();
+  let unmatchedDistrictTors = 0;
+
+  for (const row of rows) {
+    if (row.province !== BANGKOK) continue;
+    const code = normalizeBangkokDistrict(row.district);
+    if (!code) {
+      unmatchedDistrictTors += 1;
+      continue;
+    }
+    const budget = row.budget ?? 0;
+    const acc = districts.get(code) ?? { tors: 0, budget: 0, workTypes: new Map(), winners: new Map() };
+    acc.tors += 1;
+    acc.budget += budget;
+
+    // A row classified before work types existed reads as "other", as on the site.
+    const types = row.workTypes?.length ? new Set(row.workTypes) : new Set(["other"]);
+    for (const id of types) {
+      const t = acc.workTypes.get(id) ?? { tors: 0, budget: 0 };
+      t.tors += 1;
+      t.budget += budget;
+      acc.workTypes.set(id, t);
+    }
+
+    // The feeds pad names inconsistently ("บริษัท จีไอเอส  จำกัด"); one company, one key.
+    const winner = row.winnerName?.replace(/\s+/g, " ").trim();
+    if (winner) {
+      const w = acc.winners.get(winner) ?? { tors: 0, budget: 0 };
+      w.tors += 1;
+      w.budget += budget;
+      acc.winners.set(winner, w);
+    }
+    districts.set(code, acc);
+  }
+
+  const byDistrict = [...districts.entries()]
+    .map(([code, acc]): DistrictSummary => {
+      const workTypes = [...acc.workTypes.entries()]
+        .map(([id, t]) => ({ id, ...t }))
+        .sort(byWeight((t) => t.id))
+        .map((t) => ({ ...t, share: share(t.tors, acc.tors) }));
+      const topWinners = [...acc.winners.entries()]
+        .map(([name, w]) => ({ name, ...w }))
+        .sort(byWeight((w) => w.name))
+        .slice(0, TOP_WINNERS)
+        .map(({ name, tors, budget }) => ({ name, wins: tors, budget }));
+      return {
+        code,
+        tors: acc.tors,
+        budget: acc.budget,
+        dominantWorkType: workTypes[0]!.id,
+        workTypes,
+        topWinners,
+      };
+    })
+    .sort((a, b) => a.code.localeCompare(b.code));
+
+  return { byDistrict, unmatchedDistrictTors };
 }
