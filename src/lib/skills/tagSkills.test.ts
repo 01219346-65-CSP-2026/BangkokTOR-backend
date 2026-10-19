@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { isVerbatim } from "../ai/types.ts";
 import { SKILL_VOCABULARY } from "../../modules/techstack/techstack.vocabulary.ts";
-import { SKILL_ALIASES, tagSkills, type SkillSource } from "./tagSkills.ts";
+import { SKILL_ALIASES, tagSkills, torSkillSources, type SkillSource } from "./tagSkills.ts";
 
 function slugs(text: string): string[] {
   return tagSkills([{ text }]).map((t) => t.slug).sort();
@@ -100,5 +100,33 @@ describe("tagSkills — vocabulary v2 (2026-09-30)", () => {
   test("LINE means the messaging platform, never ออนไลน์", () => {
     expect(slugs("ให้บริการออนไลน์ผ่านเว็บไซต์")).toEqual([]);
     expect(slugs("แจ้งเตือนผ่าน LINE OA และ LINE Notify")).toEqual(["lineApi"]);
+  });
+});
+
+// What tagTorSkills feeds the tagger.
+describe("torSkillSources", () => {
+  test("the project name comes first, then the full text", () => {
+    expect(torSkillSources("ระบบ GIS", "ผู้รับจ้างต้องใช้ Docker")).toEqual([
+      { text: "ระบบ GIS" },
+      { text: "ผู้รับจ้างต้องใช้ Docker" },
+    ]);
+  });
+
+  test("no full text means the name alone", () => {
+    expect(torSkillSources("ระบบ GIS", null)).toEqual([{ text: "ระบบ GIS" }]);
+    expect(torSkillSources("ระบบ GIS", undefined)).toEqual([{ text: "ระบบ GIS" }]);
+    expect(torSkillSources("ระบบ GIS", "   \n ")).toEqual([{ text: "ระบบ GIS" }]);
+  });
+
+  test("a skill only the PDF mentions is now tagged", () => {
+    // The regression: titles rarely name the stack, so title-only tagging
+    // missed this TOR's Docker requirement entirely.
+    const tags = tagSkills(torSkillSources("จ้างพัฒนาระบบบริหารงานบุคคล", "ข้อ 4.2 ติดตั้งด้วย Docker"));
+    expect(tags.map((t) => t.slug)).toEqual(["docker"]);
+  });
+
+  test("the title's quote wins when both mention a skill", () => {
+    const [tag] = tagSkills(torSkillSources("ระบบ GIS กรุงเทพ", "ใช้ QGIS ในการวิเคราะห์"));
+    expect(tag?.evidence).toBe("ระบบ GIS กรุงเทพ");
   });
 });

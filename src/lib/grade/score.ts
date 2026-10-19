@@ -12,6 +12,7 @@ export type Finding = {
   /** False when the rule was never actually evaluated. Such a rule leaves BOTH
    *  the numerator and the denominator — it is neither a pass nor a fail. */
   checked: boolean;
+  filename?: string | null;
 };
 
 export type PhaseResult = {

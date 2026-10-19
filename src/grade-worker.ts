@@ -1,5 +1,6 @@
 import { env } from "./config/env.ts";
 import { connectMongo, disconnectMongo } from "./db/mongo.ts";
+import { assertVertexConfig } from "./lib/ai/vertex.ts";
 import { findUngraded, gradeTor } from "./modules/grade/grade.service.ts";
 import { recordError } from "./modules/ingest/ingest.service.ts";
 import { beat, startBeating, workerId } from "./modules/monitor/heartbeat.service.ts";
@@ -45,7 +46,8 @@ const snapshot = () => ({
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 async function loop() {
-  console.log(`grade-worker started (provider ${env.aiProvider}, model ${env.ollamaModel})`);
+  assertVertexConfig();
+  console.log(`grade-worker started (provider ${env.aiProvider}, model ${env.vertexModel})`);
 
   let idleLogged = false;
 

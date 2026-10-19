@@ -26,6 +26,7 @@ export const RULES: Rule[] = [
     weight: 4,
     phase: "legitimacy",
     method: "deterministic",
+    absence: true,
     definition:
       "The agency named in the document does not match the agency on the procurement record.",
     cues: ["หน่วยงาน", "ชื่อหน่วยงาน", "กรม", "เทศบาล", "องค์การบริหารส่วน"],
@@ -36,6 +37,7 @@ export const RULES: Rule[] = [
     weight: 4,
     phase: "legitimacy",
     method: "deterministic",
+    absence: true,
     definition:
       "The budget stated in the document does not match the budget on the procurement record.",
     cues: ["วงเงิน", "ราคากลาง", "งบประมาณ", "บาท"],
@@ -46,6 +48,7 @@ export const RULES: Rule[] = [
     weight: 3,
     phase: "legitimacy",
     method: "ai",
+    absence: true,
     definition:
       "The document does not identify the contracting entity as a registered juristic person — no registration number, tax ID, or juristic-person requirement appears.",
     unfairWhen: undefined,
