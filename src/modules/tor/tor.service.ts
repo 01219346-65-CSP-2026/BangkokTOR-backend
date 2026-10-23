@@ -10,6 +10,7 @@ import {
   CLOSING_SOON_FIELDS,
   CLOSING_SOON_SORT,
   DEFAULT_BIDDING,
+  HIDE_UNDATED_OPEN,
   biddingFilter,
   biddingFilterFor,
   closingSoonStages,
@@ -19,6 +20,7 @@ import {
 } from "./tor.bidding.ts";
 import { BIDDING_STAGES, type BiddingStage } from "../../lib/sources/egp/procurement.ts";
 import { buildPreviewFromRows, type PreviewInput, type PreviewRow } from "./tor.preview.ts";
+import { buildInsights, type InsightRow } from "./tor.insights.ts";
 
 import {
   TOR_CATEGORIES,
@@ -59,6 +61,9 @@ export type ListInput = {
   limit: number;
 };
 
+/** GET /api/tors/insights — see tor.insights.ts. */
+export type InsightsInput = { province?: string };
+
 /** Mirrors the frontend's fitBand() in src/lib/torFit.ts — keep in step. */
 export const FIT_BANDS = ["strong", "moderate", "weak"] as const;
 export type FitBand = (typeof FIT_BANDS)[number];
@@ -68,15 +73,19 @@ const FIT_RANGES: Record<FitBand, { $gte: number; $lt?: number }> = {
   weak: { $gte: 0, $lt: 40 },
 };
 
-/** `closingSoon` is the default: the site exists to show what can still be
- *  bid on, soonest deadline first (tor.bidding.ts closingSoonStages).
+/** `mostTimeLeft` is the default: the site exists to show what can still be
+ *  bid on, and a team needs time to prepare a bid, so the open TORs with the
+ *  furthest deadline lead. `closingSoon` is the reverse (tor.bidding.ts
+ *  closingSoonStages for both).
  *
  *  `bestMatch` only means something on the scored path (listScored); a caller
- *  that asks for it without skills gets `closingSoon`. Rows with no tagged
+ *  that asks for it without skills gets `mostTimeLeft`. Rows with no tagged
  *  skills have a null fitScore, which sorts below every number, so they come
  *  last. */
 type TorSort = (typeof TOR_SORTS)[number];
-const SORTS: Record<Exclude<TorSort, "closingSoon">, Record<string, 1 | -1>> = {
+type DeadlineSort = "mostTimeLeft" | "closingSoon";
+const DEFAULT_SORT: DeadlineSort = "mostTimeLeft";
+const SORTS: Record<Exclude<TorSort, DeadlineSort>, Record<string, 1 | -1>> = {
   newest: { announcedAt: -1 },
   oldest: { announcedAt: 1 },
   budgetHigh: { budget: -1 },
@@ -134,6 +143,8 @@ export async function listTors(input: ListInput) {
   const and: QueryFilter<Tor>[] = [];
   const bidding = biddingFilterFor(input.bidding ?? DEFAULT_BIDDING, now);
   if (bidding) and.push(bidding as QueryFilter<Tor>);
+  // Open with no readable deadline: hidden from the website (tor.bidding.ts).
+  and.push(HIDE_UNDATED_OPEN as QueryFilter<Tor>);
 
   /*
    * What counts as a result.
@@ -188,7 +199,7 @@ export async function listTors(input: ListInput) {
   if (input.skills?.length) return listScored(filter, input, input.skills, now);
 
   const skip = (input.page - 1) * input.limit;
-  const sortKey = input.sort === "bestMatch" || !input.sort ? "closingSoon" : input.sort;
+  const sortKey = input.sort === "bestMatch" || !input.sort ? DEFAULT_SORT : input.sort;
 
   const [rows, total] = await Promise.all([
     TorModel.aggregate<TorLean>([
@@ -211,11 +222,11 @@ export async function listTors(input: ListInput) {
 
 type ScoredRow = TorLean & { fitScore: number | null; matchedSkillCount: number };
 
-/** $sort, plus the computed keys `closingSoon` needs — removed again after. */
+/** $sort, plus the computed keys the deadline orders need — removed again after. */
 function sortStages(sort: TorSort, now: Date): PipelineStage.FacetPipelineStage[] {
-  if (sort === "closingSoon") {
+  if (sort === "closingSoon" || sort === "mostTimeLeft") {
     return [
-      ...(closingSoonStages(now) as PipelineStage.AddFields[]),
+      ...(closingSoonStages(now, sort === "closingSoon" ? "soonest" : "latest") as PipelineStage.AddFields[]),
       { $sort: { ...CLOSING_SOON_SORT } },
       { $unset: CLOSING_SOON_FIELDS },
     ];
@@ -270,7 +281,7 @@ async function listScored(filter: QueryFilter<Tor>, input: ListInput, skills: st
     ...bands,
     {
       $facet: {
-        items: [...sortStages(input.sort ?? "closingSoon", now), { $skip: skip }, { $limit: input.limit }],
+        items: [...sortStages(input.sort ?? DEFAULT_SORT, now), { $skip: skip }, { $limit: input.limit }],
         total: [{ $count: "n" }],
       },
     },
@@ -300,7 +311,7 @@ export async function previewForProfile(input: PreviewInput) {
   const now = new Date();
   const filter: QueryFilter<Tor> = publicScope(now);
   const open = biddingFilterFor(["open"], now);
-  if (open) filter.$and = [open as QueryFilter<Tor>];
+  if (open) filter.$and = [open as QueryFilter<Tor>, HIDE_UNDATED_OPEN as QueryFilter<Tor>];
 
   const docs = await TorModel.find(filter, {
     projectName: 1,
@@ -398,7 +409,10 @@ export async function getStats() {
   const byBidding = Promise.all(
     BIDDING_STATUSES.map(async (status) => ({
       status,
-      count: await TorModel.countDocuments({ ...scope, $and: [biddingFilter(status, now) as QueryFilter<Tor>] }),
+      count: await TorModel.countDocuments({
+        ...scope,
+        $and: [biddingFilter(status, now) as QueryFilter<Tor>, HIDE_UNDATED_OPEN as QueryFilter<Tor>],
+      }),
     })),
   );
 
@@ -454,5 +468,38 @@ export async function getStats() {
       .map((p) => ({ province: p._id as string, count: p.n })),
     // The budget slider's right edge.
     maxBudget: top?.budget ?? null,
+  };
+}
+
+/**
+ * The dashboard graphs (feat/116). Same publicScope as the listings page, so
+ * the dashboard and the list never disagree — see LEARNING.md for why.
+ *
+ * Projects only the seven fields buildInsights reads. A full TOR row carries
+ * `ruleFindings` and `grade`; never loading them is the FR-19 guarantee.
+ */
+export async function getInsights(input: InsightsInput) {
+  const now = new Date();
+  const filter: QueryFilter<Tor> = publicScope(now);
+  if (input.province) filter.province = input.province;
+
+  const rows = await TorModel.find(filter, {
+    _id: 0,
+    methodId: 1,
+    budget: 1,
+    province: 1,
+    agency: 1,
+    announcedAt: 1,
+    biddingStage: 1,
+    bidClosesAt: 1,
+    district: 1,
+    workTypes: 1,
+    winnerName: 1,
+  }).lean<InsightRow[]>();
+
+  return {
+    fiscalYear: thaiFiscalYear(now),
+    province: input.province ?? null,
+    ...buildInsights(rows, now),
   };
 }

@@ -26,6 +26,7 @@ const NOENTITY: RuleSpec = {
   code: "NOENTITY",
   definition: "The document does not require the bidder to be a juristic person.",
   cues: ["นิติบุคคล"],
+  absence: true,
 };
 
 // A tiny two-file TOR text, in the exact shape feat/90's buildFullText makes.
@@ -211,12 +212,37 @@ describe("step 5 — keepVerifiedFindings", () => {
     });
   });
 
-  test("present=false is a checked non-finding", () => {
+  test("an absence rule stores ABSENCE as its evidence marker when the clause is missing", () => {
     const raw = { findings: [{ code: "NOENTITY", present: false, quote: "" }] };
     expect(keepVerifiedFindings(raw, [NOENTITY], text, files)[0]).toMatchObject({
       code: "NOENTITY",
-      fired: false,
+      fired: true,
+      evidence: "ABSENCE",
       checked: true,
+      filename: null,
+    });
+  });
+
+  test("a non-firing absence rule keeps its verified quote as evidence", () => {
+    const raw = {
+      findings: [{ code: "NOENTITY", present: true, quote: "ผู้ยื่นข้อเสนอต้องเป็นนิติบุคคล" }],
+    };
+    expect(keepVerifiedFindings(raw, [NOENTITY], text, files)[0]).toEqual({
+      code: "NOENTITY",
+      fired: false,
+      evidence: "ผู้ยื่นข้อเสนอต้องเป็นนิติบุคคล",
+      checked: true,
+      filename: "doc_1.pdf",
+    });
+  });
+
+  test("a non-firing absence rule with an invented quote remains unchecked", () => {
+    const raw = { findings: [{ code: "NOENTITY", present: true, quote: "ต้องจดทะเบียนบริษัท" }] };
+    expect(keepVerifiedFindings(raw, [NOENTITY], text, files)[0]).toMatchObject({
+      fired: false,
+      evidence: "",
+      checked: false,
+      filename: null,
     });
   });
 
@@ -278,7 +304,7 @@ describe("step 6 — createVertexGrader", () => {
     ]);
     expect(out).toEqual([
       { code: "PENALTY", fired: true, evidence: "ชำระค่าปรับวันละ 0.5%", checked: true, filename: "Attach_TOR_1.pdf" },
-      { code: "NOENTITY", fired: false, evidence: "", checked: true, filename: null },
+      { code: "NOENTITY", fired: true, evidence: "ABSENCE", checked: true, filename: null },
     ]);
   });
 

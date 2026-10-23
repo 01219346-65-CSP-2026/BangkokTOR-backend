@@ -188,7 +188,7 @@ export function buildGradePrompt(rules: RuleSpec[], text: string): string {
     "Set present to true only when the document contains a matching clause.",
     "Set quote to a WORD-FOR-WORD excerpt from the document, at most " +
       MAX_EVIDENCE_CHARS + " characters long.",
-    "Do not paraphrase. Do not invent text. If a rule is absent, use present=false and an empty quote.",
+    "Do not paraphrase. Do not invent text. For an absence-based rule, use present=false and quote=ABSENCE; this is the evidence marker for a missing clause, not a quote.",
     "",
     ...sections,
     "",
@@ -201,7 +201,8 @@ export function buildGradePrompt(rules: RuleSpec[], text: string): string {
  * Turn Gemini's raw answer into findings we are willing to store. Gemini is
  * NOT trusted. One finding per rule in `rules` (in that order):
  *   - no answer for the rule                    → fired false, checked false
- *   - present=false                             → fired false, checked true
+ *   - absence rule, present=false               → fired true, evidence ABSENCE
+ *   - absence rule, present=true with a quote   → fired false, quote verified
  *   - present=true, quote NOT in the text       → fired false, checked false
  *   - present=true, quote in the text           → fired true, checked true,
  *       evidence = quote, filename = the PDF it came from
@@ -227,6 +228,7 @@ export function keepVerifiedFindings(
   const findings = raw.findings as unknown[];
 
   return rules.map((rule) => {
+    const absenceRule = Boolean(rule.absence);
     const item = findings.find((entry) => {
       if (!entry || typeof entry !== "object" || !("code" in entry)) return false;
       return entry.code === rule.code;
@@ -239,6 +241,35 @@ export function keepVerifiedFindings(
     const candidate = item as Record<string, unknown>;
     const present = candidate.present;
     const quote = typeof candidate.quote === "string" ? candidate.quote : "";
+
+    if (absenceRule) {
+      if (present === false) {
+        return {
+          code: rule.code,
+          fired: true,
+          evidence: "ABSENCE",
+          checked: true,
+          filename: null,
+        };
+      }
+
+      if (present === true) {
+        if (!isVerbatim(quote, text)) {
+          return { code: rule.code, fired: false, evidence: "", checked: false, filename: null };
+        }
+
+        const offset = locateQuote(quote, text);
+        return {
+          code: rule.code,
+          fired: false,
+          evidence: quote,
+          checked: true,
+          filename: fileAt(files, offset),
+        };
+      }
+
+      return { code: rule.code, fired: false, evidence: "", checked: false, filename: null };
+    }
 
     if (present !== true) {
       return {

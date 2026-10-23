@@ -4,11 +4,11 @@ import { requireAdminToken } from "../../middleware/adminToken.ts";
 
 export const notificationRouter = Router();
 
-// Reads stay open; anything that mutates the collection needs the shared
-// secret. Before this, an anonymous caller could create or delete rows.
-notificationRouter.get("/", controller.listNotifications);
+// Admin only, reads included: GET /?user_id= handed anyone's notifications to
+// anyone (IDOR, NFR-08). Readers use /api/me/notifications instead.
+notificationRouter.get("/", requireAdminToken, controller.listNotifications);
 notificationRouter.post("/", requireAdminToken, controller.createNotification);
 
-notificationRouter.get("/:id", controller.getNotification);
+notificationRouter.get("/:id", requireAdminToken, controller.getNotification);
 notificationRouter.patch("/:id", requireAdminToken, controller.updateNotification);
 notificationRouter.delete("/:id", requireAdminToken, controller.deleteNotification);

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { checkDeterministic } from "../../modules/grade/grade.service.ts";
+import { checkDeterministic, toFindings } from "../../modules/grade/grade.service.ts";
 import { gradeFindings, PASS_THRESHOLD, skipFairness, type Finding } from "./score.ts";
 import { FAIRNESS_RULES, LEGITIMACY_RULES, RULES } from "./rules.ts";
 
@@ -141,19 +141,60 @@ describe("skipFairness", () => {
 });
 
 describe("deterministic mismatch checks", () => {
-  test("keep a non-empty evidence string when a budget mismatch fires", () => {
+  test("use ABSENCE evidence when the expected budget is missing", () => {
     const findings = checkDeterministic({ agency: "กรุงเทพมหานคร", budget: 2500000 }, "ค่ากลาง 1000000");
 
     const mismatch = findings.find((f) => f.code === "BUDGETMISMATCH");
     expect(mismatch).toMatchObject({ fired: true, checked: true });
-    expect(mismatch?.evidence).toBe("2500000");
+    expect(mismatch?.evidence).toBe("ABSENCE");
   });
 
-  test("keep a non-empty evidence string when an agency mismatch fires", () => {
+  test("matches a budget written with Thai digits", () => {
+    const findings = checkDeterministic(
+      { agency: "กรุงเทพมหานคร", budget: 2500000 },
+      "วงเงินงบประมาณ ๒,๕๐๐,๐๐๐ บาท",
+    );
+
+    const budget = findings.find((f) => f.code === "BUDGETMISMATCH");
+    expect(budget).toMatchObject({ fired: false, checked: true, evidence: "2500000" });
+  });
+
+  test("use ABSENCE evidence when the expected agency is missing", () => {
     const findings = checkDeterministic({ agency: "กรุงเทพมหานคร", budget: 2500000 }, "หน่วยงานอื่น");
 
     const mismatch = findings.find((f) => f.code === "IDMISMATCH");
     expect(mismatch).toMatchObject({ fired: true, checked: true });
-    expect(mismatch?.evidence).toBe("กรุงเทพมหานคร");
+    expect(mismatch?.evidence).toBe("ABSENCE");
+  });
+});
+
+describe("absence evidence verification", () => {
+  test("keeps ABSENCE for NOENTITY but rejects it for a quote-based rule", () => {
+    const findings = toFindings(
+      [
+        { code: "NOENTITY", fired: true, evidence: "ABSENCE", checked: true, filename: null },
+        {
+          code: "NOENTITY",
+          fired: false,
+          evidence: "ผู้ยื่นข้อเสนอต้องเป็นนิติบุคคล",
+          checked: true,
+          filename: "doc_1.pdf",
+        },
+        { code: "PENALTY", fired: true, evidence: "ABSENCE", checked: true, filename: null },
+      ],
+      "ผู้ยื่นข้อเสนอต้องเป็นนิติบุคคล",
+    );
+
+    expect(findings).toMatchObject([
+      { code: "NOENTITY", fired: true, evidence: "ABSENCE", checked: true },
+      {
+        code: "NOENTITY",
+        fired: false,
+        evidence: "ผู้ยื่นข้อเสนอต้องเป็นนิติบุคคล",
+        checked: true,
+        filename: "doc_1.pdf",
+      },
+      { code: "PENALTY", fired: false, evidence: "", checked: true },
+    ]);
   });
 });

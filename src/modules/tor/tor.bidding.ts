@@ -42,6 +42,15 @@ export function biddingFilter(status: BiddingStatus, now: Date = new Date()): Re
   return { $nor: [open, upcoming] };
 }
 
+/**
+ * Open, but the deadline could not be read from the ประกาศเชิญชวน. Still "open"
+ * by the rule above — the stage says bids are being taken — but the website
+ * hides it: a bidder cannot plan around a tender with no date. The public list
+ * and the toggle counts apply HIDE_UNDATED_OPEN; the detail page still resolves.
+ */
+const UNDATED_OPEN = { methodId: { $ne: DIRECT_AWARD }, biddingStage: "invitation", bidClosesAt: null };
+export const HIDE_UNDATED_OPEN = { $nor: [UNDATED_OPEN] };
+
 /** Several statuses → one filter. All three (or none) → no restriction. */
 export function biddingFilterFor(statuses: BiddingStatus[], now: Date = new Date()): Record<string, unknown> | null {
   const unique = [...new Set(statuses)];
@@ -103,11 +112,17 @@ export const STAGE_EXPRESSION = {
 const FAR_FUTURE = new Date("9999-12-31T00:00:00Z");
 
 /**
- * Aggregation stages for the `closingSoon` order: open first (soonest deadline
- * first, unknown deadlines after known ones), then upcoming, then closed (most
- * recent deadline first). Same status rule as above, expressed in $expr.
+ * Aggregation stages for the deadline orders: open first, then upcoming, then
+ * closed (most recent deadline first). Same status rule as above, in $expr.
+ *
+ *   soonest — `closingSoon`: open rows by deadline, nearest first
+ *   latest  — `mostTimeLeft`, the site default: open rows with the most time
+ *             to prepare a bid first, so a reader is not handed three-day
+ *             deadlines they cannot meet
+ *
+ * Unknown deadlines sort after known ones either way.
  */
-export function closingSoonStages(now: Date = new Date()) {
+export function closingSoonStages(now: Date = new Date(), order: "soonest" | "latest" = "soonest") {
   const biddable = { $ne: [{ $ifNull: ["$methodId", null] }, DIRECT_AWARD] };
   const isOpen = {
     $and: [
@@ -117,20 +132,22 @@ export function closingSoonStages(now: Date = new Date()) {
     ],
   };
   const isUpcoming = { $and: [biddable, { $in: [{ $ifNull: ["$biddingStage", null] }, UPCOMING_STAGES] }] };
+  const latestFirst = { $subtract: [0, { $toLong: "$_closesDesc" }] };
   return [
     {
       $addFields: {
         _biddingRank: { $switch: { branches: [{ case: isOpen, then: 0 }, { case: isUpcoming, then: 1 }], default: 2 } },
         _closesAsc: { $ifNull: ["$bidClosesAt", FAR_FUTURE] },
-        // Closed rows: the latest deadline first, and the never-checked last.
+        // Latest first; an unknown deadline (epoch 0 → key 0) after every known one.
         _closesDesc: { $ifNull: ["$bidClosesAt", new Date(0)] },
       },
     },
     {
       $addFields: {
-        _closesKey: {
-          $cond: [{ $eq: ["$_biddingRank", 2] }, { $subtract: [0, { $toLong: "$_closesDesc" }] }, { $toLong: "$_closesAsc" }],
-        },
+        _closesKey:
+          order === "latest"
+            ? latestFirst
+            : { $cond: [{ $eq: ["$_biddingRank", 2] }, latestFirst, { $toLong: "$_closesAsc" }] },
       },
     },
   ];

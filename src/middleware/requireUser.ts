@@ -39,15 +39,21 @@ export const requireUser: RequestHandler = async (req, res, next) => {
   if (!user) throw new HttpError(401, "User not synced — sign out and sign in again");
 
   res.locals.userId = user._id.toString();
+  // Defaults to the schema's default role rather than undefined, so
+  // requireRole sees a real value even for a row created before this field
+  // existed.
+  res.locals.role = user.role ?? "client";
   next();
 };
 
 async function findUser(claims: InternalClaims) {
   // google_id first: an email can change on the Google side, the subject can't.
   return (
-    (await UserModel.findOne({ google_id: claims.sub }, { _id: 1 }).lean().exec()) ??
+    (await UserModel.findOne({ google_id: claims.sub }, { _id: 1, role: 1 }).lean().exec()) ??
     (claims.email
-      ? await UserModel.findOne({ email: claims.email.toLowerCase() }, { _id: 1 }).lean().exec()
+      ? await UserModel.findOne({ email: claims.email.toLowerCase() }, { _id: 1, role: 1 })
+          .lean()
+          .exec()
       : null)
   );
 }
@@ -67,7 +73,7 @@ async function createFromClaims(claims: InternalClaims) {
 
   try {
     const doc = await UserModel.create({ google_id: claims.sub, email: claims.email.toLowerCase() });
-    return { _id: doc._id };
+    return { _id: doc._id, role: doc.role };
   } catch (err) {
     // Two first requests racing: the other one inserted the row.
     if (isDuplicateKey(err)) return findUser(claims);

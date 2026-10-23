@@ -16,8 +16,8 @@ export const TOR_CATEGORIES = [
 export const TOR_CONTRACTS = ["purchase", "hire", "construction", "lease"] as const;
 export const TOR_METHODS = ["eBidding", "specific", "competitive"] as const;
 // `bestMatch` needs the caller's skills (ListInput.skills); without them it
-// falls back to `closingSoon`, the default — see tor.service.ts listTors.
-export const TOR_SORTS = ["closingSoon", "newest", "oldest", "budgetHigh", "budgetLow", "bestMatch"] as const;
+// falls back to `mostTimeLeft`, the default — see tor.service.ts listTors.
+export const TOR_SORTS = ["mostTimeLeft", "closingSoon", "newest", "oldest", "budgetHigh", "budgetLow", "bestMatch"] as const;
 export const SKILL_TAG_SOURCES = ["keyword", "llm"] as const;
 export const TOR_STATUS_IDS = [
   "inProgress", "contracted", "deliveredOnTime", "deliveredComplete", "contractEnded",
@@ -26,7 +26,7 @@ export const TOR_STATUS_IDS = [
 export const TOR_GRADES = ["A", "B", "C"] as const;
 export const GRADE_PHASES = ["legitimacy", "fairness"] as const;
 /** Bump when weights or prompts change — see graderVersion on the schema. */
-export const GRADER_VERSION = 2;
+export const GRADER_VERSION = 2.2;
 /** Bump when the summary prompt or the FR-19 screen changes, so stale bullets
  *  are findable. Separate from GRADER_VERSION: the prompt can be reworded
  *  without the rulebook moving, and vice versa. */
@@ -157,8 +157,7 @@ const torSchema = new Schema(
           fired: Boolean,
           weight: Number,
           phase: String,
-          // Verbatim quote from the document. Enforced at write time: a fired
-          // finding without one is rejected, not stored.
+          // Verbatim quote, or ABSENCE for a rule triggered by a missing clause.
           evidence: { type: String, default: "" },
           checked: { type: Boolean, default: true },
           // The source PDF containing the quote. Older rows omit it and load
