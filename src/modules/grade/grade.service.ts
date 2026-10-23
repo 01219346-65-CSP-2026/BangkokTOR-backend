@@ -168,7 +168,7 @@ export async function gradeTor(torId: Types.ObjectId | string): Promise<GradeOut
   let bullets: SummaryBullet[] = [];
 
   try {
-    bullets = sanitizeBullets(await summarizer.summarize({ text }));
+    bullets = sanitizeBullets(await summarizer.summarize({ text, files }));
   } catch (error) {
     await recordError({
       projectId: tor.projectId,

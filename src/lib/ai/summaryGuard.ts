@@ -1,6 +1,7 @@
 import {
   MAX_BULLET_CHARS,
   MAX_BULLETS,
+  SUMMARY_SECTIONS,
   type SummaryBullet,
 } from "./types.ts";
 
@@ -144,7 +145,16 @@ export function sanitizeBullets(raw: SummaryBullet[]): SummaryBullet[] {
     if (seen.has(key)) continue;
     seen.add(key);
 
-    kept.push({ text });
+    const section = bullet.section !== null && SUMMARY_SECTIONS.includes(bullet.section) 
+    ? bullet.section : null;
+
+    const filename = typeof bullet.filename === "string" ? bullet.filename: null;
+
+    kept.push({ 
+      "section": section,
+      "text": text,
+      "filename": filename,
+    });
   }
 
   return kept;
