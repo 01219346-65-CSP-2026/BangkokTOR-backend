@@ -63,13 +63,16 @@ export const MAX_EVIDENCE_CHARS = 200;
  *  TODO(feat/92) step 1: add `section: SummarySection | null` and
  *  `filename: string | null`. */
 export type SummaryBullet = {
+  section: SummarySection | null;
   text: string;
+  filename: string | null;
 };
 
 // TODO(feat/92) step 1: SummaryInput also takes the FileSpan list.
 export type SummaryInput = {
   /** The TOR's full extracted text. */
   text: string;
+  files: FileSpan[];
 };
 
 export type Summarizer = {

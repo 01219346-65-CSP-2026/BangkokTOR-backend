@@ -1,7 +1,7 @@
 import { env } from "../../config/env.ts";
 import { fileAt, type FileSpan } from "../extract/fulltext.ts";
 import { isVerbatim, locateQuote } from "./types.ts";
-import type { GradeInput, Grader, RuleFinding, RuleSpec, Summarizer } from "./types.ts";
+import type { GradeInput, Grader, RuleFinding, RuleSpec } from "./types.ts";
 
 const MAX_EVIDENCE_CHARS = 200;
 
@@ -298,15 +298,3 @@ export function createVertexGrader(): Grader {
   };
 }
 
-// ---------------------------------------------------------------------------
-// Summarizer — built in feat/92. Leave this placeholder alone for now.
-// ---------------------------------------------------------------------------
-
-export function createVertexSummarizer(): Summarizer {
-  return {
-    id: "vertex:unconfigured",
-    async summarize() {
-      throw new Error("The Vertex summarizer arrives in feat/92/tor-ai-summary");
-    },
-  };
-}

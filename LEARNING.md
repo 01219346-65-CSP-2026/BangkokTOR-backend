@@ -151,12 +151,26 @@ The frontend groups points into cards by `section`, and leaves out points with `
 
 ### Step 10: see it on a real TOR
 
-With your key in `.env` and a TOR that has `tor_texts`:
+With your Vertex key in `.env` and a TOR that has `tor_texts`, run the summarizer
+without invoking the grader:
 
 ```sh
-bun run dev
-curl -X POST localhost:8003/api/grade/run -H 'content-type: application/json' -d '{"limit":1}'
-# wait ~1 minute, then find the TOR's id in Compass and:
+bun run summarize-worker
+```
+
+It repeatedly summarizes TORs with stored text whose `summaryVersion` is stale,
+logging each completed TOR. Stop it with Ctrl+C. To run it for a particular TOR
+instead (one TOR, then exit):
+
+```sh
+bun run summarize-worker <tor-id>
+```
+
+The script prints the generated points and writes `summaryBullets`,
+`summarizedAt`, `summaryVersion` and `summaryModel`. Fetch that TOR from the API
+to check the public result (start `bun run dev` in another terminal):
+
+```sh
 curl -s localhost:8003/api/tors/<id> | jq '.summaryPoints | group_by(.section) | map({section: .[0].section, n: length})'
 ```
 

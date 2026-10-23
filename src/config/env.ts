@@ -111,9 +111,6 @@ export const env = {
   maxUnzippedBytes: Number(process.env.MAX_UNZIPPED_BYTES ?? 1_000_000_000),
 
   // AI grading. Ollama now, Vertex later — see lib/ai/types.ts for the port.
-  aiProvider: process.env.AI_PROVIDER ?? "ollama",
-  ollamaUrl: process.env.OLLAMA_URL ?? "http://localhost:11434",
-  ollamaModel: process.env.OLLAMA_MODEL ?? "qwen2.5:7b",
   aiTimeoutMs: Number(process.env.AI_TIMEOUT_MS ?? 300_000),
 
   vertexApiKey: process.env.VERTEX_API_KEY ?? "",

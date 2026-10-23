@@ -47,7 +47,7 @@ const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 async function loop() {
   assertVertexConfig();
-  console.log(`grade-worker started (provider ${env.aiProvider}, model ${env.vertexModel})`);
+  console.log(`grade-worker started (model ${env.vertexModel})`);
 
   let idleLogged = false;
 

@@ -1,6 +1,8 @@
 import { env } from "../../config/env.ts";
 import type { FileSpan } from "../extract/fulltext.ts";
-import type { SummaryBullet, Summarizer } from "./types.ts";
+import { isDescriptive } from "./summaryGuard.ts";
+import { type SummaryBullet, type Summarizer, MAX_POINTS_PER_SECTION, MAX_BULLET_CHARS, SUMMARY_SECTIONS } from "./types.ts";
+import { callGemini } from "./vertex.ts";
 
 // ============================================================================
 // The TOR summary on Vertex AI — YOU write this file (feat/92). See LEARNING.md.
@@ -43,7 +45,32 @@ import type { SummaryBullet, Summarizer } from "./types.ts";
  * Object.fromEntries(SUMMARY_SECTIONS.map((s) => [s, points])).
  */
 export function summarySchema(filenames: string[]): Record<string, unknown> {
-  throw new Error("TODO(feat/92): summarySchema — see LEARNING.md step 3");
+  const points = {
+    type: "ARRAY",
+    maxItems: MAX_POINTS_PER_SECTION,
+    items: {
+      type: "OBJECT",
+      properties: {
+        text: {
+          type: "STRING",
+          maxLength: MAX_BULLET_CHARS,
+        },
+        filename: {
+          type: "STRING",
+          enum: filenames,
+        },
+      },
+      required: ["text", "filename"],
+    },
+  };
+
+  return {
+    type: "OBJECT",
+    properties: Object.fromEntries(
+      SUMMARY_SECTIONS.map((section) => [section, points]),
+    ),
+    required: [...SUMMARY_SECTIONS],
+  };
 }
 
 /**
@@ -59,7 +86,31 @@ export function summarySchema(filenames: string[]): Record<string, unknown> {
  *   - give the filename (from the "=== FILE" line) each point comes from
  */
 export function buildSummaryPrompt(text: string): string {
-  throw new Error("TODO(feat/92): buildSummaryPrompt — see LEARNING.md step 3");
+  return `You are reading a Thai government procurement document.
+
+  Return a JSON object with exactly these three keys:
+
+  - objective: the purpose of the procurement — why the agency is buying or commissioning the work.
+  - scope: the scope of work — what the successful bidder must deliver, perform, or provide.
+  - qualifications: bidder qualifications — who is allowed to submit an offer and what qualifications or evidence they must have.
+
+  Each key must contain an array of points, with at most ${MAX_POINTS_PER_SECTION} points per topic. If the document does not state anything for a topic, return an empty list for that key. Never invent a point.
+
+  Rules:
+  - Describe only what the document states; never evaluate it.
+  - Do not say that any condition is fair, unfair, reasonable, unreasonable, restrictive, or suspicious.
+  - Do not infer or describe the agency's intent beyond what the document explicitly states.
+  - Do not give advice, recommendations, or instructions to the reader.
+
+  Write each point in Thai, using one sentence per point and no more than ${MAX_BULLET_CHARS} characters. Preserve concrete figures, prices, percentages, dates, deadlines, durations, quantities, and other measurable details.
+
+  For every point, include the filename of the source PDF. Use the filename from the corresponding "=== FILE: ... ===" line in the document. Do not invent filenames.
+
+  The document may contain multiple files. Read the entire document before sorting points into objective, scope, and qualifications.
+
+  DOCUMENT:
+  ${text}
+  `;
 }
 
 /**
@@ -75,7 +126,53 @@ export function buildSummaryPrompt(text: string): string {
  *   - each bullet: { section, text, filename }
  */
 export function parseSummary(raw: unknown, files: FileSpan[]): SummaryBullet[] {
-  throw new Error("TODO(feat/92): parseSummary — see LEARNING.md step 3");
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    return [];
+  }
+
+  const answer = raw as Record<string, unknown>;
+  const validFilenames = new Set(files.map((file) => file.filename));
+  const bullets: SummaryBullet[] = [];
+
+  for (const section of SUMMARY_SECTIONS) {
+    const points = answer[section];
+
+    // A missing topic or a topic with the wrong shape contributes nothing.
+    if (!Array.isArray(points)) continue;
+
+    let acceptedForSection = 0;
+
+    for (const point of points) {
+      if (acceptedForSection >= MAX_POINTS_PER_SECTION) break;
+
+      if (point === null || typeof point !== "object" || Array.isArray(point)) {
+        continue;
+      }
+
+      const item = point as Record<string, unknown>;
+
+      if (typeof item.text !== "string") continue;
+
+      const text = item.text.trim();
+      if (!text) continue;
+      if (!isDescriptive(text)) continue;
+
+      const filename =
+        typeof item.filename === "string" && validFilenames.has(item.filename)
+          ? item.filename
+          : null;
+
+      bullets.push({
+        section,
+        text,
+        filename,
+      });
+
+      acceptedForSection++;
+    }
+  }
+
+  return bullets;
 }
 
 /**
@@ -85,5 +182,30 @@ export function parseSummary(raw: unknown, files: FileSpan[]): SummaryBullet[] {
  * then parseSummary. Timeout with env.aiTimeoutMs, like the grader.
  */
 export function createVertexSummarizer(): Summarizer {
-  throw new Error("TODO(feat/92): createVertexSummarizer — see LEARNING.md step 4");
+  //throw new Error("TODO(feat/92): createVertexSummarizer — see LEARNING.md step 4");
+  return {
+    id: `vertex:${env.vertexModel}`,
+
+    async summarize(input) {
+      if (!input.text.trim()) return [];
+
+      const controller = new AbortController();
+      const timeout = setTimeout(
+        () => controller.abort(),
+        env.aiTimeoutMs,
+      );
+
+      try {
+        const raw = await callGemini({
+          prompt: buildSummaryPrompt(input.text),
+          schema: summarySchema(input.files.map((file) => file.filename)),
+          signal: controller.signal,
+        });
+
+        return parseSummary(raw, input.files);
+      } finally {
+        clearTimeout(timeout);
+      }
+    },
+  };
 }

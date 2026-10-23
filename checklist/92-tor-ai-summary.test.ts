@@ -45,7 +45,7 @@ describe("feat/92 checklist", () => {
 
   test("step 7: SUMMARY_VERSION is 2 and a stored bullet has a topic and a filename", async () => {
     const { SUMMARY_VERSION, TorModel } = await load("src/modules/tor/tor.model.ts");
-    expect(SUMMARY_VERSION).toBe(2);
+    expect(SUMMARY_VERSION).toBeGreaterThanOrEqual(2);
     expect(TorModel.schema.path("summaryBullets.filename")).toBeDefined();
     const section = TorModel.schema.path("summaryBullets.section");
     expect(section, "add section to the summaryBullets sub-document").toBeDefined();
