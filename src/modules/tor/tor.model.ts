@@ -1,6 +1,7 @@
 import { Schema, model, type HydratedDocument, type InferSchemaType, type Types } from "mongoose";
 import { WORK_TYPES } from "../../lib/classify/workType.ts";
 import { BIDDING_STAGES } from "../../lib/sources/egp/procurement.ts";
+import { SUMMARY_SECTIONS } from "../../lib/ai/types.ts";
 
 // The canonical TOR document (§4.3). Money is THB integers, dates are CE —
 // both converted at the adapter edge, never here.
@@ -29,7 +30,7 @@ export const GRADER_VERSION = 2.2;
 /** Bump when the summary prompt or the FR-19 screen changes, so stale bullets
  *  are findable. Separate from GRADER_VERSION: the prompt can be reworded
  *  without the rulebook moving, and vice versa. */
-export const SUMMARY_VERSION = 1;
+export const SUMMARY_VERSION = 2;
 
 export const TOR_STATUSES = [
   "discovered",
@@ -185,6 +186,15 @@ const torSchema = new Schema(
         {
           _id: false,
           text: String,
+          section: {
+            type: String,
+            enum: [...SUMMARY_SECTIONS, null],
+            default: null,
+          },
+          filename: {
+            type: String,
+            default: null,
+          }
         },
       ],
       default: [],

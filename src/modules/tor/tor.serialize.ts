@@ -6,6 +6,7 @@ import type { TorTextLean } from "../extract/torText.model.ts";
 import { biddingStatus, procurementStage, type BiddingStatus } from "./tor.bidding.ts";
 import type { BiddingStage } from "../../lib/sources/egp/procurement.ts";
 import { egpListingUrl, isLegacyEgpUrl, SOURCE_ID as CKAN_SOURCE_ID } from "../../lib/sources/ckan/normalize.ts";
+import type { SummarySection } from "../../lib/ai/types.ts";
 
 // THE FR-19 GATE.
 //
@@ -107,6 +108,7 @@ export type PublicTorDocument = {
  */
 export type PublicTorSummaryPoint = {
   id: string;
+  section: SummarySection | null;
   text: string;
   filename: string | null;
   pageStart: number;
@@ -208,15 +210,20 @@ export function serializeDetail(
     // written by an older SUMMARY_VERSION, or by a future caller that forgets,
     // are screened here regardless.
     summaryPoints: sanitizeBullets(
-      (tor.summaryBullets ?? []).map((bullet) => ({ text: bullet.text ?? "" })),
+      (tor.summaryBullets ?? []).map((bullet) => ({
+        section: bullet.section ?? null,
+        text: bullet.text ?? "",
+        filename: bullet.filename ?? null,
+      })),
     ).map((bullet, position) => {
       return {
         // Bullets carry no _id of their own (_id: false on the subdocument),
         // so the id is positional — stable for a given stored summary, which
         // is all a React key needs.
         id: `${String(tor._id)}-s${position}`,
+        section: bullet.section,
         text: bullet.text,
-        filename: null,
+        filename: bullet.filename,
         pageStart: 0,
         pageEnd: 0,
       };

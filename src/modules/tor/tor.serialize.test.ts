@@ -110,7 +110,7 @@ describe("serializeDetail — summary points", () => {
   test("emits summary points and no document text at all", () => {
     const out = serializeDetail(
       tor({
-        summaryBullets: [{ text: "กำหนดยื่นข้อเสนอภายใน 11 ม.ค. 2568" }],
+        summaryBullets: [{ section: "scope", text: "กำหนดยื่นข้อเสนอภายใน 11 ม.ค. 2568", filename: "doc_S50610000092.pdf" }],
       }),
       [],
       text(),
@@ -123,19 +123,45 @@ describe("serializeDetail — summary points", () => {
     expect(json).not.toContain("extractedSections");
   });
 
-  test("a point carries no citation until the summarizer names its file (feat/92)", () => {
+  test("a point cites the PDF the summarizer tagged it with", () => {
     const out = serializeDetail(
-      tor({ summaryBullets: [{ text: "วางหลักประกันซองร้อยละ 5" }] }),
+      tor({
+        summaryBullets: [{ section: "qualifications", text: "วางหลักประกันซองร้อยละ 5", filename: "doc_S50610000092.pdf" }],
+      }),
       [],
       text(),
     );
 
     expect(out.summaryPoints[0]).toMatchObject({
+      section: "qualifications",
       text: "วางหลักประกันซองร้อยละ 5",
-      filename: null,
+      filename: "doc_S50610000092.pdf",
       pageStart: 0,
       pageEnd: 0,
     });
+  });
+
+  test("each point says which card it belongs to; an old row's points have none", () => {
+    const out = serializeDetail(
+      tor({
+        summaryBullets: [
+          { section: "objective", text: "เพื่อพัฒนาระบบบริการประชาชน", filename: null },
+          { text: "กำหนดส่งมอบภายใน 180 วัน" }, // SUMMARY_VERSION 1: no section
+        ],
+      }),
+      [],
+      text(),
+    );
+    expect(out.summaryPoints.map((p) => p.section)).toEqual(["objective", null]);
+  });
+
+  test("a point without a file keeps its text but has no citation", () => {
+    const out = serializeDetail(
+      tor({ summaryBullets: [{ section: "scope", text: "กำหนดส่งมอบภายใน 180 วัน", filename: null }] }),
+      [],
+      text(),
+    );
+    expect(out.summaryPoints[0]).toMatchObject({ text: "กำหนดส่งมอบภายใน 180 วัน", filename: null });
   });
 
   test("an evaluative bullet never reaches the public shape", () => {
@@ -146,9 +172,9 @@ describe("serializeDetail — summary points", () => {
     const out = serializeDetail(
       tor({
         summaryBullets: [
-          { text: "กำหนดส่งมอบภายใน 180 วัน" },
-          { text: "เงื่อนไขนี้ไม่เป็นธรรมต่อผู้รับจ้าง" },
-          { text: "This tender restricts competition." },
+          { section: "scope", text: "กำหนดส่งมอบภายใน 180 วัน", filename: "doc_S50610000092.pdf" },
+          { section: "scope", text: "เงื่อนไขนี้ไม่เป็นธรรมต่อผู้รับจ้าง", filename: "doc_S50610000092.pdf" },
+          { section: "qualifications", text: "This tender restricts competition.", filename: "doc_S50610000092.pdf" },
         ],
       }),
       [],

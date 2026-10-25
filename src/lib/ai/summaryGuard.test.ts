@@ -7,7 +7,11 @@ import { MAX_BULLET_CHARS, MAX_BULLETS, type SummaryBullet } from "./types.ts";
 // is reading generated output, because a marker list cannot catch a judgement
 // phrased around it.
 
-const bullet = (text: string): SummaryBullet => ({ text });
+const bullet = (
+  text: string,
+  filename: string | null = null,
+  section: SummaryBullet["section"] = "scope",
+): SummaryBullet => ({ section, text, filename });
 
 describe("isDescriptive", () => {
   test("accepts a point that states a requirement", () => {
@@ -113,11 +117,13 @@ describe("sanitizeBullets", () => {
 
   test("de-duplicates — a bundle repeats the same requirement across documents", () => {
     const kept = sanitizeBullets([
-      bullet("วางหลักประกันซองร้อยละ 5"),
-      bullet("วางหลักประกันซองร้อยละ 5"),
-      bullet("  วางหลักประกันซองร้อยละ 5  "),
+      bullet("วางหลักประกันซองร้อยละ 5", "doc_1.pdf"),
+      bullet("วางหลักประกันซองร้อยละ 5", "Attach_TOR_1.pdf"),
+      bullet("  วางหลักประกันซองร้อยละ 5  ", null),
     ]);
     expect(kept).toHaveLength(1);
+    // The first occurrence wins, so the citation is the first file named.
+    expect(kept[0]?.filename).toBe("doc_1.pdf");
   });
 
   test("caps the list at MAX_BULLETS", () => {
@@ -127,8 +133,28 @@ describe("sanitizeBullets", () => {
     expect(sanitizeBullets(many)).toHaveLength(MAX_BULLETS);
   });
 
+  test("keeps the filename, which is what makes a point traceable to a PDF", () => {
+    const [only] = sanitizeBullets([bullet("กำหนดส่งมอบภายใน 180 วัน", "doc_1.pdf")]);
+    expect(only?.filename).toBe("doc_1.pdf");
+  });
+
+  test("keeps the topic, which is what puts a point in the right card", () => {
+    const [only] = sanitizeBullets([bullet("เป็นนิติบุคคล", "doc_1.pdf", "qualifications")]);
+    expect(only?.section).toBe("qualifications");
+  });
+
+  test("a stored row with no topic (SUMMARY_VERSION 1) keeps its text, topic null", () => {
+    const legacy = [{ text: "กำหนดส่งมอบภายใน 180 วัน" }] as unknown as SummaryBullet[];
+    expect(sanitizeBullets(legacy)).toEqual([{ section: null, text: "กำหนดส่งมอบภายใน 180 วัน", filename: null }]);
+  });
+
+  test("an unknown topic is not passed through", () => {
+    const odd = [{ section: "advice", text: "กำหนดส่งมอบภายใน 180 วัน", filename: null }] as unknown as SummaryBullet[];
+    expect(sanitizeBullets(odd)[0]?.section).toBeNull();
+  });
+
   test("survives a non-string text field from a malformed model response", () => {
-    const junk = [{ text: null }] as unknown as SummaryBullet[];
+    const junk = [{ section: "scope", text: null, filename: null }] as unknown as SummaryBullet[];
     expect(sanitizeBullets(junk)).toEqual([]);
   });
 });
