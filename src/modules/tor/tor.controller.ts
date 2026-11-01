@@ -32,6 +32,15 @@ export async function grade(req: Request, res: Response) {
   res.json(grade);
 }
 
+export async function advisory(req: Request, res: Response) {
+  const advisory = await service.getTorAdvisory(param(req.params.id));
+  if (!advisory) {
+    res.status(404).json({ error: "not_found" });
+    return;
+  }
+  res.json(advisory);
+}
+
 export async function agencies(_req: Request, res: Response) {
   res.json(await service.listAgencies());
 }

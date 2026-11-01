@@ -1,6 +1,8 @@
 import { Router } from "express";
 import * as controller from "./tor.controller.ts";
 import { requireAdminToken } from "../../middleware/adminToken.ts";
+import { requireUser } from "../../middleware/requireUser.ts";
+import { profileLimit } from "../../middleware/limits.ts";
 
 export const torRouter = Router();
 
@@ -17,3 +19,8 @@ torRouter.get("/:id/documents/:documentId/file", controller.documentFile);
 // government agency. The FR-19 gate in tor.serialize.ts keeps it off every
 // public response, and this keeps its own route off the public internet.
 torRouter.get("/:id/grade", requireAdminToken, controller.grade);
+
+// FR-20: fired rules with their quotes. Legitimacy signals are a Registered Team
+// feature (AGENTS.md), so this stays behind sign-in, off the public detail shape.
+// requireUser first — profileLimit keys its bucket by the user it resolves.
+torRouter.get("/:id/advisory", requireUser, profileLimit, controller.advisory);

@@ -1,5 +1,5 @@
 import { sanitizeBullets } from "../../lib/ai/summaryGuard.ts";
-import { ruleByCode } from "../../lib/grade/rules.ts";
+import { ruleByCode, type RulePhase } from "../../lib/grade/rules.ts";
 import type { IngestDocumentLean } from "../ingest/document.model.ts";
 import type { TorLean } from "./tor.model.ts";
 import type { TorTextLean } from "../extract/torText.model.ts";
@@ -228,6 +228,59 @@ export function serializeDetail(
         pageEnd: 0,
       };
     }),
+  };
+}
+
+/** One rule that fired, for a signed-in reader. `evidence` is null when there is
+ *  nothing to quote: the rule fired on something the document does not say. */
+export type PublicAdvisoryFinding = {
+  code: string;
+  evidence: string | null;
+  filename: string | null;
+};
+
+export type PublicTorAdvisory = {
+  /** 1-3, higher means more to check. Null until the TOR has been reviewed, so
+   *  "not reviewed" can never read as "nothing found". */
+  level: 1 | 2 | 3 | null;
+  patternCount: number;
+  /** The first phase stopped the review, so the second has no results at all. */
+  laterPhaseSkipped: boolean;
+  phases: Array<{ phase: RulePhase; findings: PublicAdvisoryFinding[] }>;
+};
+
+const ADVISORY_LEVELS = { A: 1, B: 2, C: 3 } as const;
+const ADVISORY_PHASES: RulePhase[] = ["legitimacy", "fairness"];
+
+/**
+ * FR-20: the fired rules behind the Advisory section, for signed-in readers.
+ *
+ * This is the one place quotes leave the backend outside the admin route, so the
+ * shape stays narrow. The grade becomes a neutral level, never the letter, and
+ * the score, weights and grader details stay out. The wording itself is the
+ * frontend's: this sends rule codes, not claims.
+ */
+export function serializeAdvisory(tor: TorLean): PublicTorAdvisory {
+  const known = (tor.ruleFindings ?? []).flatMap((finding) => {
+    const rule = finding.fired ? ruleByCode(finding.code ?? "") : undefined;
+    return rule ? [{ rule, finding }] : [];
+  });
+
+  return {
+    level: tor.grade ? (ADVISORY_LEVELS[tor.grade as keyof typeof ADVISORY_LEVELS] ?? null) : null,
+    patternCount: known.length,
+    laterPhaseSkipped: tor.gradePhaseFailed === "legitimacy",
+    phases: ADVISORY_PHASES.map((phase) => ({
+      phase,
+      findings: known
+        .filter(({ rule }) => rule.phase === phase)
+        .map(({ rule, finding }) => ({
+          code: rule.code,
+          // ABSENCE is the grader's marker, not a quote. Older rows store "".
+          evidence: finding.evidence && finding.evidence !== "ABSENCE" ? finding.evidence : null,
+          filename: finding.filename ?? null,
+        })),
+    })).filter((group) => group.findings.length > 0),
   };
 }
 

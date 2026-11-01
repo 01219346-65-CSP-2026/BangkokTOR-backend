@@ -9,10 +9,17 @@ services:
       - "8003"
     environment:
       PORT: 8003
-      MONGODB_URI: mongodb://mongo:27017
+      # The data lives in Atlas (.env); the local `mongo` service is only the
+      # fallback for a checkout without one. Hard-coding it here served an
+      # empty database in production.
+      MONGODB_URI: ${MONGODB_URI:-mongodb://mongo:27017}
       MONGODB_DB_NAME: ${MONGODB_DB_NAME:-bangkoktor}
       NODE_ENV: production
       ADMIN_TOKEN: ${ADMIN_TOKEN:?ADMIN_TOKEN must be set in .env}
+      # .env is dockerignored, so only what is listed here reaches the
+      # container. Must equal the frontend's value: it verifies the user JWT
+      # the frontend signs, and the server refuses to start without it.
+      INTERNAL_JWT_SECRET: ${INTERNAL_JWT_SECRET:?INTERNAL_JWT_SECRET must be set in .env}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3003}
     depends_on:
       mongo:

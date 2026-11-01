@@ -76,6 +76,21 @@ bun run extract-worker
 bun run grade-worker    # needs Ollama on :11434
 ```
 
+To fetch new tenders on a schedule (macOS), install two launchd agents. One
+runs `discover` at 06:00 and 18:00, which also re-checks the stage and deadline
+of every TOR not yet awarded. The other keeps the ingest worker running:
+
+```sh
+./scripts/schedule/install.sh               # DISCOVER_HOURS="7 19" to change times
+./scripts/schedule/install.sh --uninstall
+```
+
+Logs go to `logs/discover.log` and `logs/worker.log`. Tenders from other
+agencies still come in by hand: export e-GP's announcement search as CSV and
+upload it on the admin Pipeline page, or use the capture extension
+([`tools/egp-capture`](tools/egp-capture/README.md)). Both end at
+`POST /api/ingest/capture`.
+
 Checks: `bun run typecheck`, `bun test`.
 
 Working on a learning branch? (`feat/9x`, `feat/SCRUM-75-77`: that one has two guides, A and B) Start with [`LEARNING.md`](LEARNING.md). Machine setup is in
