@@ -3,7 +3,7 @@ import { isValidObjectId, type PipelineStage, type QueryFilter } from "mongoose"
 import { env } from "../../config/env.ts";
 import { DocumentModel } from "../ingest/document.model.ts";
 import type { WorkTypeId } from "../../lib/classify/workType.ts";
-import { serialize, serializeDetail, serializeGrade } from "./tor.serialize.ts";
+import { serialize, serializeAdvisory, serializeDetail, serializeGrade } from "./tor.serialize.ts";
 import { TorTextModel } from "../extract/torText.model.ts";
 import {
   BIDDING_STATUSES,
@@ -33,8 +33,8 @@ import {
 } from "./tor.model.ts";
 
 // Services return plain data (6). Every read that leaves this file has been
-// through serialize() — the FR-19 gate — except getTorGrade, which is the
-// deliberate, separately-routed exception.
+// through serialize() — the FR-19 gate — except getTorGrade and getTorAdvisory,
+// the deliberate, separately-routed exceptions.
 
 export type ListInput = {
   q?: string;
@@ -384,6 +384,14 @@ export async function getTorGrade(id: string) {
   if (!isValidObjectId(id)) return null;
   const tor = await TorModel.findById(id).lean();
   return tor ? serializeGrade(tor as TorLean) : null;
+}
+
+/** The Advisory section for a signed-in reader. Same scope as the detail page,
+ *  so a TOR a reader cannot open has no advisory to read either. */
+export async function getTorAdvisory(id: string) {
+  if (!isValidObjectId(id)) return null;
+  const tor = await TorModel.findOne({ _id: id, ...publicScope() }).lean();
+  return tor ? serializeAdvisory(tor as TorLean) : null;
 }
 
 export async function listAgencies() {

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { Types } from "mongoose";
-import { publicSourceUrl, serialize, serializeDetail, serializeGrade } from "./tor.serialize.ts";
+import { publicSourceUrl, serialize, serializeAdvisory, serializeDetail, serializeGrade } from "./tor.serialize.ts";
 import type { TorLean } from "./tor.model.ts";
 
 function tor(overrides: Record<string, unknown> = {}): TorLean {
@@ -226,6 +226,75 @@ describe("serializeGrade — the internal shape", () => {
   test("keeps evidence so a grade can be audited", () => {
     const out = serializeGrade(tor());
     expect(out.findings.find((f) => f.code === "IDMISMATCH")?.evidence).toBe("กรมอื่น");
+  });
+});
+
+describe("serializeAdvisory — the signed-in Advisory section", () => {
+  test("only fired rules appear, grouped by phase with legitimacy first", () => {
+    const out = serializeAdvisory(
+      tor({
+        ruleFindings: [
+          { code: "PENALTY", fired: true, weight: 3, phase: "fairness", evidence: "ค่าปรับวันละ", checked: true, filename: "tor.pdf" },
+          { code: "HOURS", fired: false, weight: 3, phase: "fairness", evidence: "", checked: true },
+          { code: "IDMISMATCH", fired: true, weight: 4, phase: "legitimacy", evidence: "กรมอื่น", checked: true },
+        ],
+      }),
+    );
+    expect(out.patternCount).toBe(2);
+    expect(out.phases.map((p) => p.phase)).toEqual(["legitimacy", "fairness"]);
+    expect(out.phases[1]!.findings).toEqual([{ code: "PENALTY", evidence: "ค่าปรับวันละ", filename: "tor.pdf" }]);
+  });
+
+  test("a phase with nothing fired is left out", () => {
+    const out = serializeAdvisory(
+      tor({ ruleFindings: [{ code: "HOURS", fired: false, weight: 3, phase: "fairness", evidence: "", checked: true }] }),
+    );
+    expect(out.patternCount).toBe(0);
+    expect(out.phases).toEqual([]);
+  });
+
+  test("the ABSENCE marker and an empty quote both become null", () => {
+    const out = serializeAdvisory(
+      tor({
+        ruleFindings: [
+          { code: "IDMISMATCH", fired: true, weight: 4, phase: "legitimacy", evidence: "ABSENCE", checked: true },
+          { code: "BUDGETMISMATCH", fired: true, weight: 4, phase: "legitimacy", evidence: "", checked: true, filename: null },
+        ],
+      }),
+    );
+    expect(out.phases[0]!.findings.map((f) => f.evidence)).toEqual([null, null]);
+    expect(JSON.stringify(out)).not.toContain("ABSENCE");
+  });
+
+  test("a finding for an unknown rule code is dropped and not counted", () => {
+    const out = serializeAdvisory(
+      tor({ ruleFindings: [{ code: "NOT_A_RULE", fired: true, weight: 9, phase: "fairness", evidence: "x", checked: true }] }),
+    );
+    expect(out.patternCount).toBe(0);
+    expect(out.phases).toEqual([]);
+  });
+
+  test("the grade becomes a neutral level; an ungraded row has none", () => {
+    expect(serializeAdvisory(tor({ grade: "A" })).level).toBe(1);
+    expect(serializeAdvisory(tor({ grade: "B" })).level).toBe(2);
+    expect(serializeAdvisory(tor({ grade: "C" })).level).toBe(3);
+    expect(serializeAdvisory(tor({ grade: null })).level).toBeNull();
+    expect(serializeAdvisory(tor({ grade: undefined })).level).toBeNull();
+  });
+
+  test("laterPhaseSkipped is true only when the first phase stopped the review", () => {
+    expect(serializeAdvisory(tor({ gradePhaseFailed: "legitimacy" })).laterPhaseSkipped).toBe(true);
+    expect(serializeAdvisory(tor({ gradePhaseFailed: "fairness" })).laterPhaseSkipped).toBe(false);
+    expect(serializeAdvisory(tor({ gradePhaseFailed: null })).laterPhaseSkipped).toBe(false);
+  });
+
+  test("no letter grade, score, weight or grader details in the JSON", () => {
+    const json = JSON.stringify(serializeAdvisory(tor()));
+    expect(json).not.toContain('"grade"');
+    expect(json).not.toContain("gradeScore");
+    expect(json).not.toContain("42.5");
+    expect(json).not.toContain("weight");
+    expect(json).not.toContain("ollama");
   });
 });
 
