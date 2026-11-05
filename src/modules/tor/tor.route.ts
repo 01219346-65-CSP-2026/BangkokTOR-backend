@@ -24,3 +24,5 @@ torRouter.get("/:id/grade", requireAdminToken, controller.grade);
 // feature (AGENTS.md), so this stays behind sign-in, off the public detail shape.
 // requireUser first — profileLimit keys its bucket by the user it resolves.
 torRouter.get("/:id/advisory", requireUser, profileLimit, controller.advisory);
+
+torRouter.get("/:id/similar", controller.similar);

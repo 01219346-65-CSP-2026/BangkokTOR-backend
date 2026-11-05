@@ -41,6 +41,15 @@ export async function advisory(req: Request, res: Response) {
   res.json(advisory);
 }
 
+export async function similar(req: Request, res: Response) {
+  const tor = await service.getTorSimilar(param(req.params.id));
+  if (!tor) {
+    res.status(404).json({ error: "not_found" });
+    return;
+  }
+  res.json({ items: tor.map(({ tor }) => tor) });
+}
+
 export async function agencies(_req: Request, res: Response) {
   res.json(await service.listAgencies());
 }

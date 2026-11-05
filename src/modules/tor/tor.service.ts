@@ -31,6 +31,8 @@ import {
   type TorLean,
   type TorStatus,
 } from "./tor.model.ts";
+import { TITLE_CANDIDATE_SCORE } from "../../lib/sources/bma/discover.ts";
+import { similarity } from "../../lib/similar/similarTor.ts";
 
 // Services return plain data (6). Every read that leaves this file has been
 // through serialize() — the FR-19 gate — except getTorGrade and getTorAdvisory,
@@ -392,6 +394,24 @@ export async function getTorAdvisory(id: string) {
   if (!isValidObjectId(id)) return null;
   const tor = await TorModel.findOne({ _id: id, ...publicScope() }).lean();
   return tor ? serializeAdvisory(tor as TorLean) : null;
+}
+
+/* top 3 most similar tors */
+export async function getTorSimilar(id: string) {
+  if (!isValidObjectId(id)) return null;
+  const tor = await TorModel.findOne({ _id: id, ...publicScope() }).lean();
+  if (!tor) return null;
+  const candidates = await TorModel.find({...publicScope(), _id: { $ne: tor._id }}).lean();
+
+  const similar = candidates.map((candidate) => ({
+    tor: serialize(candidate as TorLean),
+    similarity: similarity(tor, candidate)
+  }))
+  .filter((item) => item.similarity >= 10)
+  .sort((a, b) => b.similarity - a.similarity)
+  .slice(0, 3);
+
+  return similar;
 }
 
 export async function listAgencies() {
