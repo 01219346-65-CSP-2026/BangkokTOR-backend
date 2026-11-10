@@ -30,6 +30,24 @@ function notFound(userId: string): HttpError {
   return new HttpError(404, `User not found: ${userId}`);
 }
 
+export type MeJSON = { role: string; session_version: number };
+
+/**
+ * What the frontend's NextAuth `jwt` callback polls on every request that
+ * isn't a fresh sign-in (src/lib/auth.ts), to catch a role change or a
+ * revoked session without waiting for the session cookie to expire
+ * (T03/T05, NFR-10). Deliberately the bare minimum: just the two fields a
+ * session needs to re-validate itself, not a profile dump.
+ */
+export async function getMe(userId: string): Promise<MeJSON> {
+  const user = await UserModel.findById(userId, { role: 1, session_version: 1 })
+    .lean<{ role?: string; session_version?: number }>()
+    .exec();
+  if (!user) throw notFound(userId);
+
+  return { role: user.role ?? "client", session_version: user.session_version ?? 0 };
+}
+
 /**
  * The signed-in user's skill profile, or null if they have never saved one —
  * which is how the frontend tells a new account from a returning one.

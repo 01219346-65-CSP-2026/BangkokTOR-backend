@@ -82,8 +82,15 @@ export async function syncUser(
 ): Promise<{ user: UserJSON; created: boolean }> {
   const fields = { ...input, last_login_at: new Date() };
 
+  // Every sign-in bumps session_version, so a token minted by an EARLIER
+  // sign-in — another device, or one an admin means to revoke — carries a
+  // now-stale value the next time GET /api/me is asked to confirm it.
   const updateWhere = (filter: QueryFilter<User>) =>
-    UserModel.findOneAndUpdate(filter, { $set: fields }, { new: true, runValidators: true })
+    UserModel.findOneAndUpdate(
+      filter,
+      { $set: fields, $inc: { session_version: 1 } },
+      { new: true, runValidators: true },
+    )
       .lean<UserLean>()
       .exec();
 
@@ -96,7 +103,7 @@ export async function syncUser(
   if (existing) return { user: serialize(existing), created: false };
 
   try {
-    const doc = await UserModel.create(fields);
+    const doc = await UserModel.create({ ...fields, session_version: 1 });
     return { user: serialize(doc.toObject<UserLean>()), created: true };
   } catch (err) {
     // Two first sign-ins racing: the other request inserted between our
