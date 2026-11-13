@@ -54,3 +54,17 @@ export const profileLimit = rateLimit({
   max: env.rateLimitProfileMax,
   key: (_req, res) => String(res.locals.userId ?? "unknown"),
 });
+
+/**
+ * GET /api/me only. Deliberately separate from profileLimit: this is polled
+ * on every request the frontend's NextAuth `jwt` callback handles, not just
+ * when the user opens their profile, and that check fails closed — sharing
+ * profileLimit's budget meant a burst of navigation could rate-limit this
+ * call and get misread as a revoked session (see env.ts rateLimitMeMax).
+ */
+export const meLimit = rateLimit({
+  name: "me",
+  windowMs: MINUTE,
+  max: env.rateLimitMeMax,
+  key: (_req, res) => String(res.locals.userId ?? "unknown"),
+});
