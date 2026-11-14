@@ -1,7 +1,8 @@
 import type { RequestHandler } from "express";
 
 /**
- * One line per request: method, path, status, duration.
+ * One line per request: method, path, status, duration. Query strings are
+ * excluded because they may contain personal data or credentials.
  *
  * There was no logging at all before, which made a 429 or a refused CORS
  * origin unverifiable in prod — the only evidence a limiter is working is a
@@ -15,7 +16,7 @@ export const requestLog: RequestHandler = (req, res, next) => {
     // Health checks fire every 30s and would drown everything else.
     if (req.originalUrl.startsWith("/health")) return;
     console.log(
-      `${req.method} ${req.originalUrl} ${res.statusCode} ${ms}ms`,
+      `${req.method} ${req.path} ${res.statusCode} ${ms}ms`,
     );
   });
 
