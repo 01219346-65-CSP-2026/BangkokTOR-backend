@@ -1,9 +1,10 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { createHmac } from "node:crypto";
 import type { Request, Response } from "express";
 import { env } from "../config/env.ts";
 import { HttpError } from "./errors.ts";
 import { requireUser } from "./requireUser.ts";
+import { UserModel } from "../modules/user/user.model.ts";
 
 const SECRET = env.internalJwtSecret;
 if (!SECRET) throw new Error("INTERNAL_JWT_SECRET must be set to test requireUser");
@@ -37,6 +38,30 @@ async function expectUnauthorized(req: Request): Promise<void> {
 }
 
 describe("requireUser", () => {
+  test("accepts a valid token for a known user", async () => {
+    const user = { _id: { toString: () => "user-id" }, role: "admin" };
+    const findOne = spyOn(UserModel, "findOne").mockImplementation(
+      () => ({ lean: () => ({ exec: async () => user }) }) as never,
+    );
+    const token = sign({ sub: "google-123", exp: Math.floor(Date.now() / 1000) + 60 });
+    const req = request(`Bearer ${token}`);
+    const res = { locals: {} } as Response;
+    const nextCalls: unknown[] = [];
+
+    try {
+      await requireUser(req, res, (error?: unknown) => nextCalls.push(error));
+
+      expect(findOne).toHaveBeenCalledWith(
+        { google_id: "google-123" },
+        { _id: 1, role: 1 },
+      );
+      expect(res.locals).toMatchObject({ userId: "user-id", role: "admin" });
+      expect(nextCalls).toEqual([undefined]);
+    } finally {
+      findOne.mockRestore();
+    }
+  });
+
   test("rejects a missing token", async () => {
     await expectUnauthorized(request());
   });

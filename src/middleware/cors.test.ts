@@ -1,23 +1,16 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import type { Request, Response } from "express";
+import { env } from "../config/env.ts";
 
-const originalCorsOrigins = process.env.CORS_ORIGINS;
-const originalNodeEnv = process.env.NODE_ENV;
-process.env.CORS_ORIGINS = "https://allowed.example";
-process.env.NODE_ENV = "production";
+import { cors } from "./cors.ts";
 
-const { cors } = await import("./cors.ts");
-
-if (originalCorsOrigins === undefined) {
-  delete process.env.CORS_ORIGINS;
-} else {
-  process.env.CORS_ORIGINS = originalCorsOrigins;
-}
-if (originalNodeEnv === undefined) {
-  delete process.env.NODE_ENV;
-} else {
-  process.env.NODE_ENV = originalNodeEnv;
-}
+const originalCorsOrigins = env.corsOrigins;
+beforeAll(() => {
+  Object.defineProperty(env, "corsOrigins", { value: ["https://allowed.example"] });
+});
+afterAll(() => {
+  Object.defineProperty(env, "corsOrigins", { value: originalCorsOrigins });
+});
 
 function invoke(origin: string, path: string): Record<string, string> {
   const headers: Record<string, string> = {};
