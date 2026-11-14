@@ -22,15 +22,14 @@ const MAX_EVIDENCE_CHARS = 200;
 //     bun test src/lib/ai/vertex.test.ts
 //
 // AUTH: a Vertex "express mode" API key (VERTEX_API_KEY in .env), sent in the
-// URL as ?key=... — no service account, no Google SDK, just `fetch`.
+// x-goog-api-key header so it is not exposed in request URLs.
 // ============================================================================
 
 // ---------------------------------------------------------------------------
 // 1. Talking to Gemini
 // ---------------------------------------------------------------------------
 
-/** The express-mode endpoint. The full URL is
- *  `${VERTEX_BASE}/${model}:generateContent?key=${apiKey}` */
+/** The express-mode endpoint. */
 export const VERTEX_BASE = "https://aiplatform.googleapis.com/v1/publishers/google/models";
 
 export type GeminiRequest = {
@@ -63,7 +62,7 @@ export type GeminiRequest = {
  *
  * Throw an Error when: the key is missing (before calling fetch), the HTTP
  * status is not ok, the prompt was blocked, finishReason is not "STOP", or the
- * text is not valid JSON. Never put the URL in an error — it contains the key.
+ * text is not valid JSON. Never include the API key in an error.
  */
 export async function callGemini<T = unknown>(req: GeminiRequest): Promise<T> {
   //throw new Error("TODO(feat/91): callGemini — see LEARNING.md step 4");
@@ -73,10 +72,13 @@ export async function callGemini<T = unknown>(req: GeminiRequest): Promise<T> {
   const model = env.vertexModel;
 
   const response = await fetch(
-    `${VERTEX_BASE}/${model}:generateContent?key=${encodeURIComponent(apiKey)}`,
+    `${VERTEX_BASE}/${model}:generateContent`,
     {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "x-goog-api-key": apiKey,
+      },
       signal: req.signal,
       body: JSON.stringify({
         contents: [{ role: "user", parts: [{ text: req.prompt }] }],
@@ -328,4 +330,3 @@ export function createVertexGrader(): Grader {
     },
   };
 }
-
