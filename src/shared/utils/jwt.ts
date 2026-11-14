@@ -14,6 +14,7 @@ import { HttpError } from "../../middleware/errors.ts";
  *   RS256/HS256 confusion attacks work.
  * - The signature is compared in constant time.
  * - `exp` is required, not optional. The frontend's tokens live 60 seconds.
+ * - `iss` and `aud` are pinned to this frontend and backend.
  */
 
 export type InternalClaims = {
@@ -23,6 +24,8 @@ export type InternalClaims = {
 
 /** Seconds of clock skew tolerated between the frontend and backend hosts. */
 const LEEWAY_S = 5;
+const ISSUER = "bangkoktor-frontend";
+const AUDIENCE = "bangkoktor-backend";
 
 function unauthorized(): HttpError {
   // One message for every failure: telling a caller WHICH check failed helps
@@ -64,6 +67,7 @@ export function verifyHs256(
     throw unauthorized();
   }
   if (typeof claims.sub !== "string" || claims.sub.length === 0) throw unauthorized();
+  if (claims.iss !== ISSUER || claims.aud !== AUDIENCE) throw unauthorized();
 
   return {
     sub: claims.sub,
