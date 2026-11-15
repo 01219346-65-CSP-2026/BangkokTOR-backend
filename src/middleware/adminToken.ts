@@ -14,10 +14,17 @@ import { HttpError } from "./errors.ts";
  * It answers 404, not 403: a 403 confirms the route exists and that a token is
  * what's missing. A 404 tells a scanner nothing it didn't already have.
  */
+/** Recorded as the actor (or `viaToken`) of an audited write — middleware/audit.ts.
+ *  It names the credential, not a person: the admin token is shared. */
+export const ADMIN_TOKEN_IDENTITY = "admin-token";
+/** Dev with no ADMIN_TOKEN set: nothing was checked, and the audit row says so. */
+export const DEV_OPEN_IDENTITY = "dev-no-token";
+
 export const requireAdminToken: RequestHandler = (req, res, next) => {
   // Dev with no token configured stays frictionless; production does not get
   // that choice — see the boot assertion in config/env.ts.
   if (!env.adminToken && !isProduction) {
+    res.locals.tokenIdentity = DEV_OPEN_IDENTITY;
     next();
     return;
   }
@@ -30,5 +37,6 @@ export const requireAdminToken: RequestHandler = (req, res, next) => {
     return;
   }
 
+  res.locals.tokenIdentity = ADMIN_TOKEN_IDENTITY;
   next();
 };
