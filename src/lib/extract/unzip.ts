@@ -28,6 +28,12 @@ export type ExtractedFile = {
   bytes: number;
 };
 
+type CentralDirectoryLocation = {
+  count: number;
+  offset: number;
+  size: number;
+};
+
 const EOCD_SIGNATURE = 0x06054b50;
 const CENTRAL_SIGNATURE = 0x02014b50;
 const LOCAL_SIGNATURE = 0x04034b50;
@@ -46,36 +52,33 @@ function findEocd(buf: Buffer): number {
   return -1;
 }
 
-/**
- * `buf` is normally the whole archive. It may instead be only its TAIL, starting
- * at file offset `base` — how an 843 MB bulk file is listed without being read
- * (sources/govspending/bulk.ts). Offsets in the directory are absolute, so they
- * are shifted by `base`; entry offsets returned are still absolute.
- */
-export function readCentralDirectory(buf: Buffer, base = 0): ZipEntry[] | null {
+function centralDirectoryLocation(buf: Buffer, base: number): CentralDirectoryLocation | null {
   const eocd = findEocd(buf);
   if (eocd < 0) return null;
 
   let count = buf.readUInt16LE(eocd + 10);
   let offset = buf.readUInt32LE(eocd + 16);
+  let size = buf.readUInt32LE(eocd + 12);
 
-  // A bundle past 4GB, or with more than 65,535 members, stores the real
-  // numbers in a ZIP64 record and leaves 0xffff/0xffffffff as markers here.
-  if (count === 0xffff || offset === 0xffffffff) {
+  if (count === 0xffff || offset === 0xffffffff || size === 0xffffffff) {
     const locator = eocd - 20;
     if (locator >= 0 && buf.readUInt32LE(locator) === ZIP64_LOCATOR_SIGNATURE) {
       const zip64 = Number(buf.readBigUInt64LE(locator + 8)) - base;
       if (zip64 >= 0 && zip64 + 56 <= buf.length && buf.readUInt32LE(zip64) === ZIP64_EOCD_SIGNATURE) {
         count = Number(buf.readBigUInt64LE(zip64 + 32));
+        size = Number(buf.readBigUInt64LE(zip64 + 40));
         offset = Number(buf.readBigUInt64LE(zip64 + 48));
       }
     }
   }
 
+  if (![count, offset, size].every(Number.isSafeInteger)) return null;
+  return { count, offset, size };
+}
+
+function parseCentralDirectory(buf: Buffer, start: number, count: number): ZipEntry[] | null {
   const entries: ZipEntry[] = [];
-  let p = offset - base;
-  // The tail handed in does not reach back to the directory's start.
-  if (p < 0) return null;
+  let p = start;
 
   for (let i = 0; i < count; i++) {
     if (p + 46 > buf.length || buf.readUInt32LE(p) !== CENTRAL_SIGNATURE) break;
@@ -87,6 +90,7 @@ export function readCentralDirectory(buf: Buffer, base = 0): ZipEntry[] | null {
     const extraLength = buf.readUInt16LE(p + 30);
     const commentLength = buf.readUInt16LE(p + 32);
     const localHeaderOffset = buf.readUInt32LE(p + 42);
+    if (p + 46 + nameLength + extraLength + commentLength > buf.length) break;
     const name = buf.subarray(p + 46, p + 46 + nameLength).toString("utf8");
 
     entries.push({ name, compressedSize, uncompressedSize, method, localHeaderOffset });
@@ -96,17 +100,64 @@ export function readCentralDirectory(buf: Buffer, base = 0): ZipEntry[] | null {
   return entries;
 }
 
+/**
+ * `buf` is normally the whole archive. It may instead be only its TAIL, starting
+ * at file offset `base` — how an 843 MB bulk file is listed without being read
+ * (sources/govspending/bulk.ts). Offsets in the directory are absolute, so they
+ * are shifted by `base`; entry offsets returned are still absolute.
+ */
+export function readCentralDirectory(buf: Buffer, base = 0): ZipEntry[] | null {
+  const location = centralDirectoryLocation(buf, base);
+  if (!location) return null;
+  const start = location.offset - base;
+  if (start < 0) return null;
+  return parseCentralDirectory(buf, start, location.count);
+}
+
+async function readFileCentralDirectory(
+  file: ReturnType<typeof Bun.file>,
+  maxEntries: number,
+): Promise<ZipEntry[] | "too-many-entries" | null> {
+  const tailSize = Math.min(file.size, 0xffff + 22 + 76);
+  const base = file.size - tailSize;
+  const tail = Buffer.from(await file.slice(base, file.size).arrayBuffer());
+  const location = centralDirectoryLocation(tail, base);
+  if (!location) return null;
+  if (location.count > maxEntries) return "too-many-entries";
+
+  const maxDirectorySize = location.count * (46 + 0xffff * 3);
+  if (
+    location.size > maxDirectorySize ||
+    location.offset + location.size > file.size ||
+    location.offset + location.size > Number.MAX_SAFE_INTEGER
+  ) {
+    return null;
+  }
+
+  const directory = Buffer.from(
+    await file.slice(location.offset, location.offset + location.size).arrayBuffer(),
+  );
+  return parseCentralDirectory(directory, 0, location.count);
+}
+
 // The central directory records where each entry's LOCAL header is, but the
 // local header carries its own (differently sized) name and extra fields, so
 // the data offset can only be computed once that header is read.
-function readEntryData(buf: Buffer, entry: ZipEntry): Buffer | "too-large" | null {
+async function readEntryData(
+  file: ReturnType<typeof Bun.file>,
+  entry: ZipEntry,
+): Promise<Buffer | "too-large" | null> {
   const h = entry.localHeaderOffset;
-  if (h + 30 > buf.length || buf.readUInt32LE(h) !== LOCAL_SIGNATURE) return null;
+  if (h + 30 > file.size) return null;
+  const header = Buffer.from(await file.slice(h, h + 30).arrayBuffer());
+  if (header.length !== 30 || header.readUInt32LE(0) !== LOCAL_SIGNATURE) return null;
 
-  const nameLength = buf.readUInt16LE(h + 26);
-  const extraLength = buf.readUInt16LE(h + 28);
+  const nameLength = header.readUInt16LE(26);
+  const extraLength = header.readUInt16LE(28);
   const start = h + 30 + nameLength + extraLength;
-  const raw = buf.subarray(start, start + entry.compressedSize);
+  if (start + entry.compressedSize > file.size) return null;
+  const raw = Buffer.from(await file.slice(start, start + entry.compressedSize).arrayBuffer());
+  if (raw.length !== entry.compressedSize) return null;
 
   if (entry.method === 0) return Buffer.from(raw); // stored
   if (entry.method === 8) {
@@ -154,11 +205,9 @@ export async function unzipBundle(
   const file = Bun.file(zipPath);
   if (!(await file.exists())) return { ok: false, reason: "not-a-zip" };
 
-  const buf = Buffer.from(await file.arrayBuffer());
-  const entries = readCentralDirectory(buf);
+  const entries = await readFileCentralDirectory(file, limits.maxEntries);
+  if (entries === "too-many-entries") return { ok: false, reason: "too-many-entries" };
   if (!entries || entries.length === 0) return { ok: false, reason: "not-a-zip" };
-
-  if (entries.length > limits.maxEntries) return { ok: false, reason: "too-many-entries" };
 
   // Checked against the DECLARED sizes, before anything is inflated. That is
   // the whole point: a bomb is refused on its own manifest.
@@ -174,7 +223,7 @@ export async function unzipBundle(
   let written = 0;
 
   for (const entry of pdfs) {
-    const data = readEntryData(buf, entry);
+    const data = await readEntryData(file, entry);
     if (data === "too-large") return { ok: false, reason: "too-large" };
     if (!data) continue; // one unreadable member must not lose the other six
 

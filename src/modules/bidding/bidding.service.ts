@@ -192,16 +192,62 @@ async function invitationText(projectId: string, url: string): Promise<string | 
   await mkdir(dir, { recursive: true });
 
   try {
-    const response = await politeFetch(url);
-    const bytes = new Uint8Array(await response.arrayBuffer());
-    // A 200 HTML error page is a real failure mode on these hosts.
-    if (bytes.byteLength > MAX_INVITATION_BYTES || new TextDecoder().decode(bytes.slice(0, 4)) !== "%PDF") {
-      await recordError(projectId, "invitation-not-a-pdf", `${bytes.byteLength} bytes, not a PDF`, url);
+    const controller = new AbortController();
+    const response = await politeFetch(url, { signal: controller.signal });
+    if (!response.body) {
+      await recordError(projectId, "invitation-not-a-pdf", "0 bytes, not a PDF", url);
       return null;
     }
-    await Bun.write(path, bytes);
 
-    const loaded = await loadBundle([{ path, name: "invitation.pdf", bytes: bytes.byteLength }], dir, 120_000);
+    const writer = Bun.file(path).writer();
+    const prefix: number[] = [];
+    let bytes = 0;
+    let writerEnded = false;
+
+    try {
+      for await (const chunk of response.body as unknown as AsyncIterable<Uint8Array>) {
+        bytes += chunk.byteLength;
+        if (bytes > MAX_INVITATION_BYTES) {
+          controller.abort();
+          await writer.end();
+          writerEnded = true;
+          await recordError(projectId, "invitation-not-a-pdf", `${bytes} bytes, exceeds the PDF limit`, url);
+          return null;
+        }
+
+        if (prefix.length < 4) {
+          for (const byte of chunk.slice(0, 4 - prefix.length)) prefix.push(byte);
+          if (prefix.length === 4 && new TextDecoder().decode(new Uint8Array(prefix)) !== "%PDF") {
+            controller.abort();
+            await writer.end();
+            writerEnded = true;
+            await recordError(projectId, "invitation-not-a-pdf", `${bytes} bytes, not a PDF`, url);
+            return null;
+          }
+        }
+
+        await writer.write(chunk);
+      }
+
+      await writer.end();
+      writerEnded = true;
+    } catch (error) {
+      if (!writerEnded) {
+        try {
+          await writer.end();
+        } catch {
+          // Preserve the stream error; the partial file is removed below.
+        }
+      }
+      throw error;
+    }
+
+    if (bytes < 4) {
+      await recordError(projectId, "invitation-not-a-pdf", `${bytes} bytes, not a PDF`, url);
+      return null;
+    }
+
+    const loaded = await loadBundle([{ path, name: "invitation.pdf", bytes }], dir, 120_000);
     if (!loaded.ok) {
       await recordError(projectId, "invitation-loader-failed", loaded.message, url);
       return null;
