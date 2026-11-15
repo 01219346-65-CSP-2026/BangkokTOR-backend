@@ -16,7 +16,7 @@ Getting past the check is you, in your browser. That is the line we don't cross.
 2. Click **Load unpacked** and pick this folder (`tools/egp-capture`).
 3. Open the extension's **Details → Extension options**:
    - **Backend URL:** `http://localhost:8003`, or wherever the backend runs.
-   - **Admin token:** the backend's `ADMIN_TOKEN`. Leave it empty if that's unset in development.
+   - **Capture token:** the backend's `CAPTURE_TOKEN` from `.env`. This token only permits sending captures; generate it separately from `ADMIN_TOKEN`.
 
 ## Daily use, one click
 
