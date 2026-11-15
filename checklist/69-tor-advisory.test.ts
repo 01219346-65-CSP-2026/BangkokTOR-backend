@@ -11,10 +11,15 @@ describe("feat/69 checklist", () => {
   });
 
   test("the public serializer still keeps findings off its shape", () => {
+    // The gate is an allowlist (T09): the grade fields must never be named in it.
     const serializer = source("src/modules/tor/tor.serialize.ts");
-    const gate = serializer.slice(serializer.indexOf("PRIVATE_GRADE_FIELDS"), serializer.indexOf("as const"));
-    expect(gate).toContain('"ruleFindings"');
-    expect(gate).toContain('"grade"');
+    const start = serializer.indexOf("export const PUBLIC_TOR_FIELDS");
+    const gate = serializer.slice(start, serializer.indexOf("as const", start));
+    expect(start).toBeGreaterThan(-1);
+    expect(serializer).not.toContain("...rest");
+    expect(gate).not.toContain('"ruleFindings"');
+    expect(gate).not.toContain('"grade"');
+    expect(gate).not.toContain('"gradeScore"');
   });
 
   test("the advisory reads only TORs the public can open", () => {
