@@ -7,6 +7,10 @@ import { parseProfilePut } from "./me.validation.ts";
 // `res.locals.userId` is set by requireUser, which every route in this module
 // sits behind. Nothing here takes a user id from the request itself.
 
+export const getMe: RequestHandler = async (_req, res) => {
+  res.json(await service.getMe(res.locals.userId as string));
+};
+
 export const getProfile: RequestHandler = async (_req, res) => {
   const profile = await service.getProfile(res.locals.userId as string);
 

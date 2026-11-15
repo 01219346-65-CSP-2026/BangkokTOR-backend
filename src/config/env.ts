@@ -101,6 +101,13 @@ export const env = {
   rateLimitWriteMax: Number(process.env.RATE_LIMIT_WRITE_MAX ?? 20),
   rateLimitRunMax: Number(process.env.RATE_LIMIT_RUN_MAX ?? 2),
   rateLimitProfileMax: Number(process.env.RATE_LIMIT_PROFILE_MAX ?? 60),
+  // GET /api/me, polled by the frontend's NextAuth `jwt` callback on every
+  // request under a protected prefix (not just when the user opens their
+  // profile), so it needs headroom well above profileLimit — sharing that
+  // budget meant a burst of navigation could rate-limit this check, and the
+  // check fails closed, so a 429 here used to look exactly like a revoked
+  // session and signed people out.
+  rateLimitMeMax: Number(process.env.RATE_LIMIT_ME_MAX ?? 300),
 
   // Verified bundles reach 512,452,129 bytes. Anything past this is recorded
   // as oversize rather than filling the disk.

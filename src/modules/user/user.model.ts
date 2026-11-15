@@ -15,10 +15,16 @@ const userSchema = new Schema({
   locale: String,
   last_login_at: Date,
   role: {
-    type: String, 
-    enum: ['admin', 'client', 'agency'], 
-    default: 'client' 
+    type: String,
+    enum: ['admin', 'client', 'agency'],
+    default: 'client'
   },
+  // Bumped on every sign-in (user.service.ts syncUser). The frontend's
+  // NextAuth JWT carries the value it saw at sign-in; GET /api/me lets it
+  // compare that against the current value on every later request, so an
+  // older session (another device, or one explicitly revoked) stops being
+  // honoured without anyone needing to sign in again (T03/T05, NFR-10).
+  session_version: { type: Number, default: 0 },
   profile: {
     description: String,
     budget_min: Number,
