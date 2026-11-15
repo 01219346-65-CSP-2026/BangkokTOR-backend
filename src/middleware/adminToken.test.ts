@@ -36,6 +36,22 @@ describe("requireAdminToken", () => {
     expect(calls[0]).toMatchObject({ status: 404 });
   });
 
+  test("returns a 404 for a wrong token with the same byte length", () => {
+    const calls = invoke("admin-token-tesy");
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toBeInstanceOf(HttpError);
+    expect(calls[0]).toMatchObject({ status: 404 });
+  });
+
+  test("returns a 404 for a token with a different UTF-8 byte length", () => {
+    const calls = invoke("admin-token-testé");
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toBeInstanceOf(HttpError);
+    expect(calls[0]).toMatchObject({ status: 404 });
+  });
+
   test("passes when the right token is provided", () => {
     expect(invoke("admin-token-test")).toEqual([undefined]);
   });

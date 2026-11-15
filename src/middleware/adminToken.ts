@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "node:crypto";
 import type { RequestHandler } from "express";
 import { env, isProduction } from "../config/env.ts";
 import { HttpError } from "./errors.ts";
@@ -25,7 +26,17 @@ export const requireAdminToken: RequestHandler = (req, res, next) => {
   const header = req.headers["x-admin-token"];
   const provided = Array.isArray(header) ? header[0] : header;
 
-  if (!provided || !env.adminToken || provided !== env.adminToken) {
+  if (!provided || !env.adminToken) {
+    next(new HttpError(404, `Not found: ${req.method} ${req.originalUrl}`));
+    return;
+  }
+
+  const providedBuffer = Buffer.from(provided);
+  const expectedBuffer = Buffer.from(env.adminToken);
+  if (
+    providedBuffer.length !== expectedBuffer.length ||
+    !timingSafeEqual(providedBuffer, expectedBuffer)
+  ) {
     next(new HttpError(404, `Not found: ${req.method} ${req.originalUrl}`));
     return;
   }
