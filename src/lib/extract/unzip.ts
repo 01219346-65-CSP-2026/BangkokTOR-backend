@@ -99,7 +99,7 @@ export function readCentralDirectory(buf: Buffer, base = 0): ZipEntry[] | null {
 // The central directory records where each entry's LOCAL header is, but the
 // local header carries its own (differently sized) name and extra fields, so
 // the data offset can only be computed once that header is read.
-function readEntryData(buf: Buffer, entry: ZipEntry): Buffer | null {
+function readEntryData(buf: Buffer, entry: ZipEntry): Buffer | "too-large" | null {
   const h = entry.localHeaderOffset;
   if (h + 30 > buf.length || buf.readUInt32LE(h) !== LOCAL_SIGNATURE) return null;
 
@@ -111,8 +111,11 @@ function readEntryData(buf: Buffer, entry: ZipEntry): Buffer | null {
   if (entry.method === 0) return Buffer.from(raw); // stored
   if (entry.method === 8) {
     try {
-      return inflateRawSync(raw);
-    } catch {
+      return inflateRawSync(raw, { maxOutputLength: entry.uncompressedSize });
+    } catch (error) {
+      if (error instanceof Error && "code" in error && error.code === "ERR_BUFFER_TOO_LARGE") {
+        return "too-large";
+      }
       return null;
     }
   }
@@ -172,6 +175,7 @@ export async function unzipBundle(
 
   for (const entry of pdfs) {
     const data = readEntryData(buf, entry);
+    if (data === "too-large") return { ok: false, reason: "too-large" };
     if (!data) continue; // one unreadable member must not lose the other six
 
     // The declared size is a claim; this is the measurement. A bomb that lies
