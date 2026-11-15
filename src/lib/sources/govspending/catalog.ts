@@ -18,7 +18,7 @@ export type BulkRef = { fiscalYear: number; url: string };
 
 type Envelope<T> = { success?: boolean; code?: number; message?: string; data?: T };
 
-/** The key rides in a query string, so it must never reach a log or ingest_errors. */
+/** Keep the API key out of upstream errors before they reach logs or ingest_errors. */
 export function redactKey(text: string, key: string = env.datagothKey): string {
   return key ? text.split(key).join("***") : text;
 }
@@ -27,7 +27,9 @@ async function getJson<T>(path: string, params: Record<string, string>): Promise
   const url = `${GOVSPENDING_API}/${path}?${new URLSearchParams(params)}`;
   let response: Response;
   try {
-    response = await politeFetch(url);
+    response = await politeFetch(url, {
+      headers: { "api-key": env.datagothKey },
+    });
   } catch (error) {
     throw new Error(redactKey(String(error)));
   }
@@ -56,12 +58,11 @@ export async function resolveBulk(pinned: number | undefined = env.egpFiscalYear
     );
   }
 
-  // Returns a URL to a static zip; the key is only needed to be handed it.
+  // The returned URL points to a public static zip; the key is not needed to download it.
   const url = await getJson<string>("get/api/bulkfile", {
     type: "EGP",
     code: BULK_CODE,
     year: String(fiscalYear),
-    user_key: env.datagothKey,
   });
 
   return { fiscalYear, url };

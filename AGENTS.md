@@ -107,7 +107,7 @@ not break the others" is structural rather than a promise.
 
 | | **A — BMA e-GP** `egp2.bangkok.go.th` | **B — CKAN → national e-GP** |
 |---|---|---|
-| Auth | none | `DATAGOTH_KEY` (CKAN only; e-GP side none) |
+| Auth | none | `DATAGOTH_KEY` (CKAN and govspending API, sent in headers) |
 | Discovery | paged JSON search, TOR filtered server-side | bulk pull 511,606 rows, filter **client-side** |
 | Documents | one PDF per announcement | one zip bundle per project |
 | Coverage | BMA only — 68 agencies, 4,854 TOR projects, 2018→ | national |
@@ -285,9 +285,10 @@ refreshed about monthly.
 
 ```
 GET https://api-govspending.data.go.th/api/get/api/years?type=EGP        → [2569, 2568, …]
-GET …/api/get/api/bulkfile?type=EGP&code=egp-contract&year=NNNN&user_key=KEY
+GET …/api/get/api/bulkfile?type=EGP&code=egp-contract&year=NNNN
                                   → URL of …/export/bulkfile/egp/NNNN-egp-contract.zip
-GET …/api/service/egp-contract?api-key=KEY&year=NNNN&offset&limit     (paged REST, same rows)
+All govspending requests send `DATAGOTH_KEY` in the `api-key` header.
+GET …/api/service/egp-contract?year=NNNN&offset&limit                 (paged REST, same rows)
 ```
 
 - FY2569's zip is 843 MB (`Last-Modified` 2026-09-08, byte ranges supported). It holds

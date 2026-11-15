@@ -88,16 +88,18 @@ describe("step 3 — locateQuote", () => {
 describe("step 4 — callGemini", () => {
   const schema = { type: "OBJECT", properties: { ok: { type: "BOOLEAN" } } };
 
-  test("POSTs the prompt to the express-mode URL with the key", async () => {
+  test("POSTs to the express-mode URL and sends the key in a header", async () => {
     fakeFetch(reply({ ok: true }));
     await callGemini({ prompt: "hello", schema });
 
     expect(calls).toHaveLength(1);
     const { url, init } = calls[0]!;
     expect(url).toBe(
-      "https://aiplatform.googleapis.com/v1/publishers/google/models/gemini-2.5-flash:generateContent?key=test-key",
+      "https://aiplatform.googleapis.com/v1/publishers/google/models/gemini-2.5-flash:generateContent",
     );
     expect(init.method).toBe("POST");
+    expect((init.headers as Record<string, string>)["x-goog-api-key"]).toBe("test-key");
+    expect(url).not.toContain("test-key");
   });
 
   test("sends the prompt, temperature 0, and the JSON schema", async () => {
