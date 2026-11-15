@@ -16,6 +16,11 @@ const PUBLISHED_METADATA_URL = `${EGP_ORIGIN}/egp-approval-service/apv-common/in
 const DOWNLOAD_URL = `${EGP_ORIGIN}/egp-upload-service/v1/downloadFileTest`;
 
 const ZIP_MAGIC = [0x50, 0x4b, 0x03, 0x04]; // "PK\x03\x04"
+const ZIP_ID_PATTERN = /^[a-f0-9]{32}$/i;
+
+export function isValidZipId(value: unknown): value is string {
+  return typeof value === "string" && ZIP_ID_PATTERN.test(value);
+}
 
 type MetadataResponse = {
   response?: { responseCode?: string; messageCode?: string; description?: string };
@@ -57,14 +62,19 @@ async function probe(metadataUrl: string, projectId: string): Promise<RawDocumen
     throw new EgpFieldError(`e-GP rejected the request for ${projectId} (${detail})`);
   }
 
-  if (payload.response?.responseCode === "0" && payload.data?.zipId) {
+  if (payload.response?.responseCode === "0") {
+    const zipId = payload.data?.zipId;
+    if (!isValidZipId(zipId)) {
+      throw new EgpFieldError(`e-GP returned a malformed ZIP identifier for ${projectId}`);
+    }
+
     return [
       {
         projectId,
         kind: "bundle",
-        url: `${DOWNLOAD_URL}?fileId=${encodeURIComponent(payload.data.zipId)}`,
-        externalId: payload.data.zipId,
-        filename: payload.data.buildName1 ?? `${payload.data.zipId}.zip`,
+        url: `${DOWNLOAD_URL}?fileId=${encodeURIComponent(zipId)}`,
+        externalId: zipId,
+        filename: payload.data?.buildName1 ?? `${zipId}.zip`,
       },
     ];
   }
