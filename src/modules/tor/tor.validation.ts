@@ -1,3 +1,4 @@
+import { HttpError } from "../../middleware/errors.ts";
 import { WORK_TYPES, type WorkTypeId } from "../../lib/classify/workType.ts";
 import { SKILL_VOCABULARY } from "../techstack/techstack.vocabulary.ts";
 import { TOR_CATEGORIES, TOR_METHODS, TOR_SORTS } from "./tor.model.ts";
@@ -48,6 +49,25 @@ function date(value: unknown): Date | undefined {
 }
 
 const MAX_LIMIT = 100;
+
+// Sec P11 (T19/T12): none of these is ever legitimately long — a search box
+// doesn't need a multi-KB query, and `q` gets regex-matched across four
+// fields on every scan. An over-long value is a sign of misuse, not a stale
+// client, so (unlike an unknown enum value elsewhere in this file) it is
+// rejected rather than silently dropped.
+const MAX_Q_LENGTH = 200;
+const MAX_AGENCY_LENGTH = 200;
+const MAX_PROVINCE_LENGTH = 64;
+
+function boundedString(value: unknown, field: string, max: number): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  if (trimmed.length > max) {
+    throw new HttpError(400, `"${field}" must be at most ${max} characters`);
+  }
+  return trimmed;
+}
 
 /** The procurement stage. Unknown values are dropped like an unknown category. */
 function stage(value: unknown): BiddingStage | undefined {
@@ -102,11 +122,11 @@ export function parseListQuery(query: Record<string, unknown>): ListInput {
   const limit = Math.min(MAX_LIMIT, Math.max(1, rawLimit));
 
   return {
-    q: typeof query.q === "string" && query.q.trim() ? query.q.trim() : undefined,
-    agency: typeof query.agency === "string" ? query.agency : undefined,
+    q: boundedString(query.q, "q", MAX_Q_LENGTH),
+    agency: boundedString(query.agency, "agency", MAX_AGENCY_LENGTH),
     category: category(query.category),
     method: method(query.method),
-    province: typeof query.province === "string" ? query.province : undefined,
+    province: boundedString(query.province, "province", MAX_PROVINCE_LENGTH),
     stage: stage(query.stage),
     workType: workType(query.workType),
     minBudget: num(query.minBudget),
@@ -121,8 +141,6 @@ export function parseListQuery(query: Record<string, unknown>): ListInput {
     limit,
   };
 }
-
-const MAX_PROVINCE_LENGTH = 64;
 
 /** GET /api/tors/insights. A blank, array, or overlong province is no province. */
 export function parseInsightsQuery(query: Record<string, unknown>): InsightsInput {
