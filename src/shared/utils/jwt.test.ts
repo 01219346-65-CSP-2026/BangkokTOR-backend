@@ -25,7 +25,13 @@ function status(fn: () => unknown): number | string {
   }
 }
 
-const valid = { sub: "google-123", email: "a@b.co", exp: NOW / 1000 + 60 };
+const valid = {
+  sub: "google-123",
+  email: "a@b.co",
+  exp: NOW / 1000 + 60,
+  iss: "bangkoktor-frontend",
+  aud: "bangkoktor-backend",
+};
 
 describe("verifyHs256", () => {
   test("accepts a token signed with the shared secret", () => {
@@ -51,6 +57,15 @@ describe("verifyHs256", () => {
     const none = `${b64({ alg: "none" })}.${b64(valid)}.`;
     expect(status(() => verifyHs256(none, SECRET, NOW))).toBe(401);
     expect(status(() => verifyHs256(sign(valid, SECRET, { alg: "HS512" }), SECRET, NOW))).toBe(401);
+  });
+
+  test("requires the expected issuer and audience", () => {
+    expect(status(() => verifyHs256(sign({ ...valid, iss: "other-frontend" }), SECRET, NOW))).toBe(401);
+    expect(status(() => verifyHs256(sign({ ...valid, aud: "other-backend" }), SECRET, NOW))).toBe(401);
+    const { iss: _issuer, ...withoutIssuer } = valid;
+    const { aud: _audience, ...withoutAudience } = valid;
+    expect(status(() => verifyHs256(sign(withoutIssuer), SECRET, NOW))).toBe(401);
+    expect(status(() => verifyHs256(sign(withoutAudience), SECRET, NOW))).toBe(401);
   });
 
   test("rejects malformed input and an empty secret", () => {
