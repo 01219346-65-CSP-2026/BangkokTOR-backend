@@ -26,11 +26,11 @@ export const TOR_STATUS_IDS = [
 export const TOR_GRADES = ["A", "B", "C"] as const;
 export const GRADE_PHASES = ["legitimacy", "fairness"] as const;
 /** Bump when weights or prompts change — see graderVersion on the schema. */
-export const GRADER_VERSION = 2.2;
+export const GRADER_VERSION = 2.3;
 /** Bump when the summary prompt or the FR-19 screen changes, so stale bullets
  *  are findable. Separate from GRADER_VERSION: the prompt can be reworded
  *  without the rulebook moving, and vice versa. */
-export const SUMMARY_VERSION = 2;
+export const SUMMARY_VERSION = 3;
 
 export const TOR_STATUSES = [
   "discovered",
@@ -163,6 +163,10 @@ const torSchema = new Schema(
           // The source PDF containing the quote. Older rows omit it and load
           // without a filename, so the field is nullable for compatibility.
           filename: { type: String, default: null },
+          // T16: a fired absence finding the model asserted and nothing could
+          // verify. Out of the grade and the published advisory until an
+          // admin resolves it (grade.service.ts resolveReview).
+          needsReview: { type: Boolean, default: false },
         },
       ],
       default: [],
@@ -259,6 +263,8 @@ torSchema.index({ workTypes: 1 });
 // Best-match scoring reads requiredSkills.slug; the backfill finds stale tags.
 torSchema.index({ "requiredSkills.slug": 1 });
 torSchema.index({ skillTaggerVersion: 1 });
+// T16: the absence-review queue (grade.service.ts listPendingReviews).
+torSchema.index({ "ruleFindings.needsReview": 1 });
 
 export type Tor = InferSchemaType<typeof torSchema>;
 export type TorDoc = HydratedDocument<Tor>;

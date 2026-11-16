@@ -4,6 +4,7 @@ import {
   SUMMARY_SECTIONS,
   type SummaryBullet,
 } from "./types.ts";
+import { looksLikeInjection } from "./promptSafety.ts";
 
 // THE FR-19 SCREEN.
 //
@@ -106,6 +107,7 @@ const EVALUATIVE_MARKERS = [
   "too strict",
 ] as const;
 
+
 /**
  * True when a bullet describes the document rather than judging it.
  *
@@ -115,7 +117,9 @@ const EVALUATIVE_MARKERS = [
  */
 export function isDescriptive(text: string): boolean {
   const haystack = text.toLowerCase();
-  return !EVALUATIVE_MARKERS.some((marker) => haystack.includes(marker));
+  if (EVALUATIVE_MARKERS.some((marker) => haystack.includes(marker))) return false;
+  // T16: an echo of an instruction planted in the document is not a description.
+  return !looksLikeInjection(text);
 }
 
 /**

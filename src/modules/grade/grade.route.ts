@@ -1,7 +1,7 @@
 import { Router } from "express";
 import * as controller from "./grade.controller.ts";
 import { requireAdminToken } from "../../middleware/adminToken.ts";
-import { runLimit, pipelineLimit } from "../../middleware/limits.ts";
+import { runLimit, pipelineLimit, writeLimit } from "../../middleware/limits.ts";
 
 export const gradeRouter = Router();
 
@@ -11,3 +11,8 @@ export const gradeRouter = Router();
 // the admin UI's status polling at two calls an hour.
 gradeRouter.post("/run", runLimit, requireAdminToken, controller.startRun);
 gradeRouter.get("/status", pipelineLimit, controller.status);
+
+// T16: the absence-review queue. Admin-token gated like the grade itself —
+// these rows name rules that fired against a named agency.
+gradeRouter.get("/reviews", pipelineLimit, requireAdminToken, controller.listReviews);
+gradeRouter.post("/reviews/:torId/:code", writeLimit, requireAdminToken, controller.resolve);

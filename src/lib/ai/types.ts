@@ -29,6 +29,10 @@ export type RuleFinding = {
   /** False when the rule was never asked — none of its cues appear in the text. */
   checked: boolean;
   filename: string | null;
+  /** T16: true for a fired absence finding the model asserted and nothing
+   *  verified. Held out of the grade and the published advisory until an
+   *  admin confirms or rejects it (grade.service.ts resolveReview). */
+  needsReview?: boolean;
 };
 
 export type GradeInput = {

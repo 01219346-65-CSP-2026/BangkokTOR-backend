@@ -3,6 +3,7 @@ import type { FileSpan } from "../extract/fulltext.ts";
 import { isDescriptive } from "./summaryGuard.ts";
 import { type SummaryBullet, type Summarizer, MAX_POINTS_PER_SECTION, MAX_BULLET_CHARS, SUMMARY_SECTIONS } from "./types.ts";
 import { callGemini } from "./vertex.ts";
+import { DATA_ONLY_INSTRUCTION, DATA_ONLY_REMINDER, wrapDocument } from "./promptSafety.ts";
 
 // ============================================================================
 // The TOR summary on Vertex AI — YOU write this file (feat/92). See LEARNING.md.
@@ -84,9 +85,14 @@ export function summarySchema(filenames: string[]): Record<string, unknown> {
  *   - write in Thai, one sentence each, at most MAX_BULLET_CHARS characters
  *   - keep concrete figures, deadlines, quantities
  *   - give the filename (from the "=== FILE" line) each point comes from
+ *
+ * T16: the text is fenced in <document> tags with a data-only instruction
+ * before and after it (promptSafety.ts).
  */
 export function buildSummaryPrompt(text: string): string {
   return `You are reading a Thai government procurement document.
+
+  ${DATA_ONLY_INSTRUCTION}
 
   Return a JSON object with exactly these three keys:
 
@@ -108,8 +114,9 @@ export function buildSummaryPrompt(text: string): string {
 
   The document may contain multiple files. Read the entire document before sorting points into objective, scope, and qualifications.
 
-  DOCUMENT:
-  ${text}
+${wrapDocument(text)}
+
+  ${DATA_ONLY_REMINDER}
   `;
 }
 

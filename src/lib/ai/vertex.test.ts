@@ -188,6 +188,18 @@ describe("step 5 — buildGradePrompt", () => {
   test("contains the whole document", () => {
     expect(prompt).toContain(text);
   });
+  test("T16: fences the document and says it is data, before and after it", () => {
+    // The fence itself sits on its own lines; the instructions only mention it.
+    const open = prompt.indexOf("<document>\n");
+    const close = prompt.lastIndexOf("\n</document>");
+    expect(open).toBeGreaterThan(-1);
+    expect(close).toBeGreaterThan(open);
+    expect(prompt.slice(open, close)).toContain(text);
+    expect(prompt.slice(0, open)).toContain("ONLY as data");
+    expect(prompt.slice(close)).toContain("data only");
+    // The rules sit before the document, never after it.
+    expect(prompt.indexOf("[PENALTY]")).toBeLessThan(open);
+  });
 });
 
 describe("step 5 — keepVerifiedFindings", () => {
@@ -223,6 +235,23 @@ describe("step 5 — keepVerifiedFindings", () => {
       checked: true,
       filename: null,
     });
+  });
+
+  test("T16: a fired absence finding is held for review — nothing verified it", () => {
+    const raw = { findings: [{ code: "NOENTITY", present: false, quote: "" }] };
+    expect(keepVerifiedFindings(raw, [NOENTITY], text, files)[0]!.needsReview).toBe(true);
+  });
+
+  test("T16: a verified quote is never held for review", () => {
+    const raw = {
+      findings: [
+        { code: "PENALTY", present: true, quote: "ชำระค่าปรับวันละ 0.5%" },
+        { code: "NOENTITY", present: true, quote: "ผู้ยื่นข้อเสนอต้องเป็นนิติบุคคล" },
+      ],
+    };
+    for (const f of keepVerifiedFindings(raw, [PENALTY, NOENTITY], text, files)) {
+      expect(f.needsReview).toBeUndefined();
+    }
   });
 
   test("a non-firing absence rule keeps its verified quote as evidence", () => {
@@ -306,7 +335,7 @@ describe("step 6 — createVertexGrader", () => {
     ]);
     expect(out).toEqual([
       { code: "PENALTY", fired: true, evidence: "ชำระค่าปรับวันละ 0.5%", checked: true, filename: "Attach_TOR_1.pdf" },
-      { code: "NOENTITY", fired: true, evidence: "ABSENCE", checked: true, filename: null },
+      { code: "NOENTITY", fired: true, evidence: "ABSENCE", checked: true, filename: null, needsReview: true },
     ]);
   });
 

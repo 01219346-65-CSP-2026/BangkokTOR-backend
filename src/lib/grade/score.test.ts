@@ -198,3 +198,30 @@ describe("absence evidence verification", () => {
     ]);
   });
 });
+
+describe("T16 — findings held for review", () => {
+  test("an unreviewed absence finding does not move the grade", () => {
+    const base = [...allOk("legitimacy"), ...allOk("fairness")];
+    const held = base.map((f) =>
+      f.code === "NOENTITY" ? { ...fired("NOENTITY"), evidence: "ABSENCE", needsReview: true } : f,
+    );
+    const without = base.filter((f) => f.code !== "NOENTITY");
+
+    expect(gradeFindings(held)).toEqual(gradeFindings(without));
+  });
+
+  test("once confirmed, the same finding counts", () => {
+    const confirmed = [...allOk("legitimacy"), ...allOk("fairness")].map((f) =>
+      f.code === "NOENTITY" ? { ...fired("NOENTITY"), evidence: "ABSENCE", needsReview: false } : f,
+    );
+    expect(gradeFindings(confirmed).legitimacy.firedCodes).toEqual(["NOENTITY"]);
+  });
+
+  test("toFindings keeps the flag on a verified absence marker", () => {
+    const [out] = toFindings(
+      [{ code: "NOENTITY", fired: true, evidence: "ABSENCE", checked: true, filename: null, needsReview: true }],
+      "ข้อความ",
+    );
+    expect(out).toMatchObject({ fired: true, evidence: "ABSENCE", needsReview: true });
+  });
+});
