@@ -16,6 +16,7 @@ services:
       MONGODB_DB_NAME: ${MONGODB_DB_NAME:-bangkoktor}
       NODE_ENV: production
       ADMIN_TOKEN: ${ADMIN_TOKEN:?ADMIN_TOKEN must be set in .env}
+      CAPTURE_TOKEN: ${CAPTURE_TOKEN:-}
       # .env is dockerignored, so only what is listed here reaches the
       # container. Must equal the frontend's value: it verifies the user JWT
       # the frontend signs, and the server refuses to start without it.

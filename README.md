@@ -154,6 +154,10 @@ starting expensive pipeline runs or deleting rows.
 above. It answers **404, not 403**, so it does not confirm the route exists.
 The server refuses to boot in production without it.
 
+The e-GP capture extension uses the separate `CAPTURE_TOKEN` instead. It is
+accepted only by `POST /api/ingest/capture` and must differ from `ADMIN_TOKEN`,
+so a token stored by the extension cannot authorize other admin routes.
+
 Rate limits are per IP, fixed window, counted in memory:
 
 | Tier | Limit | Routes |
