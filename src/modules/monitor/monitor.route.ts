@@ -3,7 +3,7 @@ import { requireAdminToken } from "../../middleware/adminToken.ts";
 import { requireUser } from "../../middleware/requireUser.ts";
 import { requireRole } from "../../middleware/requireRole.ts";
 import { writeLimit } from "../../middleware/limits.ts";
-import { flushWorkers, queue, retry, runs, status, stopWorkers } from "./monitor.controller.ts";
+import { audit, flushWorkers, queue, retry, runs, status, stopWorkers } from "./monitor.controller.ts";
 
 // Operational views for the admin dashboard (FR-07).
 //
@@ -22,6 +22,9 @@ monitorRouter.use(requireUser, requireRole("admin"));
 monitorRouter.get("/status", status);
 monitorRouter.get("/queue", queue);
 monitorRouter.get("/runs", runs);
+// T21: recent audit_log entries. Read-only — there is deliberately no route
+// that edits or deletes one.
+monitorRouter.get("/audit", audit);
 
 // Controls. Admin-token gated like the /run endpoints, but on the write tier:
 // runLimit (2/hour) is sized for multi-minute runs, not for clicking Retry.

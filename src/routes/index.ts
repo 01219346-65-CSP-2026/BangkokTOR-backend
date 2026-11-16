@@ -11,6 +11,7 @@ import { torRouter } from "../modules/tor/tor.route.ts";
 import { monitorRouter } from "../modules/monitor/monitor.route.ts";
 import { budgetRouter } from "../modules/budget/budget.route.ts";
 import { readLimit, pipelineLimit, writeLimit } from "../middleware/limits.ts";
+import { auditWrites } from "../middleware/audit.ts";
 
 export const routes = Router();
 
@@ -21,6 +22,11 @@ routes.get("/", (_req, res) => {
 // Health is deliberately unlimited: Docker's healthcheck hits it every 30s and
 // a limiter here would mark a busy container unhealthy.
 routes.use(healthRouter);
+
+// T21: every POST/PUT/PATCH/DELETE below gets an audit_log row naming the
+// actor requireUser or requireAdminToken resolved. In front of every router so
+// a new write route is audited by default — see middleware/audit.ts.
+routes.use(auditWrites);
 
 // modules/_template is the reference implementation — route, controller,
 // service, model, validation — kept as documentation, not mounted. Its
