@@ -88,6 +88,9 @@ export const env = {
   // read the private grade. Not user auth — see middleware/adminToken.ts.
   // Required in production; optional in dev so a local run needs no setup.
   adminToken: process.env.ADMIN_TOKEN ?? "",
+  // Separate credential for the capture extension. Accepted only by
+  // POST /api/ingest/capture; never grants access to other admin routes.
+  captureToken: process.env.CAPTURE_TOKEN ?? "",
   // HS256 secret the frontend signs its per-request user token with (see
   // BangkokTOR-frontend/src/api/client.ts). Must match the frontend's value.
   // Unset means the /api/me routes answer 401 — they never fall open.
@@ -157,6 +160,9 @@ export const isProduction = env.nodeEnv === "production";
 // Fail at boot rather than silently serving the pipeline's trigger endpoints to
 // anyone who finds them. Dev is exempt so a fresh clone runs with no setup.
 export function assertServeConfig(): void {
+  if (env.captureToken && env.captureToken === env.adminToken) {
+    throw new Error("CAPTURE_TOKEN must be different from ADMIN_TOKEN.");
+  }
   if (isProduction && !env.adminToken) {
     throw new Error(
       "ADMIN_TOKEN is not set — the /run, write, and grade routes would be unprotected in production. See .env.example.",

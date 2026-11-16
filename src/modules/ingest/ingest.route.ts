@@ -13,12 +13,11 @@ export const ingestRouter = Router();
 // Neither /run nor /capture goes through requireUser/requireRole: /run has no
 // HTTP caller at all (the discover CLI calls the service directly, see
 // src/discover.ts), and /capture is called cross-origin by the egp-capture
-// Chrome extension (tools/egp-capture), which never holds a signed-in session
-// or an internal JWT — only the shared admin token (see middleware/cors.ts
-// CAPTURE_PATH). Neither is reachable through the admin web panel's session
-// flow, so they are not part of the role-gating in this change.
+// Chrome extension (tools/egp-capture), which uses its capture-only token
+// (see middleware/cors.ts CAPTURE_PATH). Neither is reachable through the
+// admin web panel's session flow, so they are not part of role-gating.
 ingestRouter.post("/run", runLimit, requireAdminToken, controller.startRun);
 ingestRouter.get("/status", pipelineLimit, controller.status);
 // Project ids from e-GP's search, sent by the capture extension (tools/egp-capture).
-// A write like any other: gated on the shared secret, fast, queues only.
+// The capture-only token is accepted here; the admin token remains accepted too.
 ingestRouter.post("/capture", writeLimit, requireAdminToken, controller.capture);

@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtemp, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { deflateRawSync } from "node:zlib";
 import { readCentralDirectory, unzipBundle } from "./unzip.ts";
 
 function crc32(buf: Buffer): number {
@@ -132,6 +133,47 @@ describe("unzipBundle", () => {
 
     expect(result).toEqual({ ok: false, reason: "too-large" });
     // Nothing was written: the refusal happened before any inflate.
+    expect(await readdir(out).catch(() => [])).toEqual([]);
+  });
+
+  test("caps inflation when an entry understates its uncompressed size", async () => {
+    const body = Buffer.from("%PDF " + "x".repeat(5_000));
+    const compressed = deflateRawSync(body);
+    const name = Buffer.from("a.pdf");
+    const crc = crc32(body);
+
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(0x04034b50, 0);
+    local.writeUInt16LE(8, 8);
+    local.writeUInt32LE(crc, 14);
+    local.writeUInt32LE(compressed.length, 18);
+    local.writeUInt32LE(body.length, 22);
+    local.writeUInt16LE(name.length, 26);
+
+    const central = Buffer.alloc(46);
+    central.writeUInt32LE(0x02014b50, 0);
+    central.writeUInt16LE(8, 10);
+    central.writeUInt32LE(crc, 16);
+    central.writeUInt32LE(compressed.length, 20);
+    central.writeUInt32LE(1_024, 24);
+    central.writeUInt16LE(name.length, 28);
+    central.writeUInt32LE(0, 42);
+
+    const centralOffset = local.length + name.length + compressed.length;
+    const eocd = Buffer.alloc(22);
+    eocd.writeUInt32LE(0x06054b50, 0);
+    eocd.writeUInt16LE(1, 8);
+    eocd.writeUInt16LE(1, 10);
+    eocd.writeUInt32LE(central.length + name.length, 12);
+    eocd.writeUInt32LE(centralOffset, 16);
+
+    const zip = join(await tmp(), "lying-size.zip");
+    await writeFile(zip, Buffer.concat([local, name, compressed, central, name, eocd]));
+
+    const out = await tmp();
+    const result = await unzipBundle(zip, out, { maxEntries: 10, maxUnzippedBytes: 10_000 });
+
+    expect(result).toEqual({ ok: false, reason: "too-large" });
     expect(await readdir(out).catch(() => [])).toEqual([]);
   });
 

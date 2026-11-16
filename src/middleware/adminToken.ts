@@ -1,11 +1,20 @@
+import { timingSafeEqual } from "node:crypto";
 import type { RequestHandler } from "express";
 import { env, isProduction } from "../config/env.ts";
 import { HttpError } from "./errors.ts";
 
+function tokensMatch(provided: string, expected: string): boolean {
+  const providedBuffer = Buffer.from(provided);
+  const expectedBuffer = Buffer.from(expected);
+  return (
+    providedBuffer.length === expectedBuffer.length &&
+    timingSafeEqual(providedBuffer, expectedBuffer)
+  );
+}
+
 /**
- * A shared-secret gate for the routes that must not be open to the internet:
- * the three `POST /run` endpoints that kick off expensive pipeline work, the
- * user/notification/techstack writes, and the private grade route.
+ * ADMIN_TOKEN gates privileged routes; CAPTURE_TOKEN is additionally accepted
+ * only by `POST /api/ingest/capture`.
  *
  * This is not a user auth system — it does not identify anyone. It is the
  * smallest thing that stops an anonymous caller from saturating the box or
@@ -32,7 +41,23 @@ export const requireAdminToken: RequestHandler = (req, res, next) => {
   const header = req.headers["x-admin-token"];
   const provided = Array.isArray(header) ? header[0] : header;
 
-  if (!provided || !env.adminToken || provided !== env.adminToken) {
+  if (!provided) {
+    next(new HttpError(404, `Not found: ${req.method} ${req.originalUrl}`));
+    return;
+  }
+
+  const isCaptureRoute =
+    req.method === "POST" &&
+    req.baseUrl === "/api/ingest" &&
+    req.path.replace(/\/+$/, "") === "/capture";
+  const matchesAdminToken =
+    env.adminToken !== "" && tokensMatch(provided, env.adminToken);
+  const matchesCaptureToken =
+    isCaptureRoute &&
+    env.captureToken !== "" &&
+    tokensMatch(provided, env.captureToken);
+
+  if (!matchesAdminToken && !matchesCaptureToken) {
     next(new HttpError(404, `Not found: ${req.method} ${req.originalUrl}`));
     return;
   }

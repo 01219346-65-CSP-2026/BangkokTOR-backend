@@ -5,12 +5,12 @@
 const BATCH = 2000; // the endpoint's per-call cap (ingest.validation.ts MAX_CAPTURE)
 
 async function settings() {
-  const { backendUrl = "http://localhost:8003", adminToken = "" } = await chrome.storage.local.get(["backendUrl", "adminToken"]);
-  return { backendUrl: backendUrl.replace(/\/+$/, ""), adminToken };
+  const { backendUrl = "http://localhost:8003", captureToken = "" } = await chrome.storage.local.get(["backendUrl", "captureToken"]);
+  return { backendUrl: backendUrl.replace(/\/+$/, ""), captureToken };
 }
 
 async function send(projects, source) {
-  const { backendUrl, adminToken } = await settings();
+  const { backendUrl, captureToken } = await settings();
   const total = { received: 0, enqueued: 0, alreadyHeld: 0, invalid: 0 };
 
   const url = `${backendUrl}/api/ingest/capture`;
@@ -19,7 +19,7 @@ async function send(projects, source) {
     try {
       response = await fetch(url, {
         method: "POST",
-        headers: { "Content-Type": "application/json", ...(adminToken ? { "X-Admin-Token": adminToken } : {}) },
+        headers: { "Content-Type": "application/json", ...(captureToken ? { "X-Admin-Token": captureToken } : {}) },
         body: JSON.stringify({ source, projects: projects.slice(i, i + BATCH) }),
       });
     } catch (error) {
@@ -29,7 +29,7 @@ async function send(projects, source) {
     }
     if (!response.ok) {
       // The endpoint answers 404 to a wrong or missing token (adminToken.ts).
-      const hint = response.status === 404 ? " — check the admin token in the extension's options" : "";
+      const hint = response.status === 404 ? " — check CAPTURE_TOKEN in the extension's options" : "";
       throw new Error(`HTTP ${response.status}${hint}`);
     }
     const r = await response.json();
@@ -41,20 +41,24 @@ async function send(projects, source) {
 /** Options page "Test connection": an empty batch, which the endpoint accepts
  *  and answers with zero counts — proves URL, CORS and token in one call. */
 async function test() {
-  const { backendUrl, adminToken } = await settings();
+  const { backendUrl, captureToken } = await settings();
   const url = `${backendUrl}/api/ingest/capture`;
   try {
     const response = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json", ...(adminToken ? { "X-Admin-Token": adminToken } : {}) },
+      headers: { "Content-Type": "application/json", ...(captureToken ? { "X-Admin-Token": captureToken } : {}) },
       body: JSON.stringify({ source: "egp-search", projects: [] }),
     });
     if (response.ok) return `OK — ${url} answered`;
-    return response.status === 404 ? `${url} answered 404: wrong or missing admin token` : `${url} answered HTTP ${response.status}`;
+    return response.status === 404 ? `${url} answered 404: wrong or missing capture token` : `${url} answered HTTP ${response.status}`;
   } catch (error) {
     return `cannot reach ${url}: ${error.message}`;
   }
 }
+
+chrome.runtime.onInstalled.addListener(() => {
+  chrome.storage.local.remove("adminToken");
+});
 
 chrome.runtime.onMessage.addListener((message, _sender, reply) => {
   if (message?.type === "bkt-test") {
