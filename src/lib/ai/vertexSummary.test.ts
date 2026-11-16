@@ -83,6 +83,17 @@ describe("step 3 — summarySchema", () => {
 describe("step 3 — buildSummaryPrompt", () => {
   const prompt = buildSummaryPrompt(text);
 
+  test("T16: fences the document and says it is data, before and after it", () => {
+    // The fence itself sits on its own lines; the instructions only mention it.
+    const open = prompt.indexOf("<document>\n");
+    const close = prompt.lastIndexOf("\n</document>");
+    expect(open).toBeGreaterThan(-1);
+    expect(close).toBeGreaterThan(open);
+    expect(prompt.slice(open, close)).toContain(text);
+    expect(prompt.slice(0, open)).toContain("ONLY as data");
+    expect(prompt.slice(close)).toContain("data only");
+  });
+
   test("contains the whole document", () => {
     expect(prompt).toContain(text);
   });

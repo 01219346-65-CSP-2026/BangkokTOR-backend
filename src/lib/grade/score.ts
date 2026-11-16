@@ -13,6 +13,9 @@ export type Finding = {
    *  the numerator and the denominator — it is neither a pass nor a fail. */
   checked: boolean;
   filename?: string | null;
+  /** T16: an unverified absence finding awaiting a human. Like an unchecked
+   *  rule, it leaves both numerator and denominator until it is resolved. */
+  needsReview?: boolean;
 };
 
 export type PhaseResult = {
@@ -45,6 +48,9 @@ function scorePhase(rules: Rule[], findings: Map<string, Finding>): PhaseResult 
     // denominator. Scoring a rule nobody evaluated as a pass would inflate
     // every grade in the corpus.
     if (!finding?.checked) continue;
+    // Held for review (T16): the model said a clause is missing and nothing
+    // could verify that. It must not move a grade until a human agrees.
+    if (finding.needsReview) continue;
 
     checkedWeight += rule.weight;
     if (finding.fired) {

@@ -1,6 +1,7 @@
 import { env } from "../../config/env.ts";
 import { fileAt, type FileSpan } from "../extract/fulltext.ts";
 import { isVerbatim, locateQuote } from "./types.ts";
+import { DATA_ONLY_INSTRUCTION, DATA_ONLY_REMINDER, looksLikeInjection, wrapDocument } from "./promptSafety.ts";
 import type { GradeInput, Grader, RuleFinding, RuleSpec } from "./types.ts";
 
 const MAX_EVIDENCE_CHARS = 200;
@@ -175,6 +176,10 @@ export function gradeSchema(codes: string[]): Record<string, unknown> {
  * so, quote it word-for-word." Must include, for every rule, its code in
  * [BRACKETS], its definition, its unfairWhen (if any) and its cue words; the
  * words WORD-FOR-WORD and the MAX_EVIDENCE_CHARS limit; and the whole text.
+ *
+ * T16: the text is fenced in <document> tags with a data-only instruction
+ * before and after it (promptSafety.ts). The rules come first, the document
+ * last, so nothing in the document sits between our instructions.
  */
 export function buildGradePrompt(rules: RuleSpec[], text: string): string {
   const sections = rules.map((rule) => {
@@ -184,6 +189,8 @@ export function buildGradePrompt(rules: RuleSpec[], text: string): string {
   });
 
   return [
+    DATA_ONLY_INSTRUCTION,
+    "",
     "Read the entire document below and answer for every rule.",
     "For each rule, return one object: { code, present, quote }.",
     "The code must be exactly one of the rule codes in this prompt.",
@@ -194,8 +201,9 @@ export function buildGradePrompt(rules: RuleSpec[], text: string): string {
     "",
     ...sections,
     "",
-    "Document:",
-    text,
+    wrapDocument(text),
+    "",
+    DATA_ONLY_REMINDER,
   ].join("\n");
 }
 
@@ -203,7 +211,8 @@ export function buildGradePrompt(rules: RuleSpec[], text: string): string {
  * Turn Gemini's raw answer into findings we are willing to store. Gemini is
  * NOT trusted. One finding per rule in `rules` (in that order):
  *   - no answer for the rule                    → fired false, checked false
- *   - absence rule, present=false               → fired true, evidence ABSENCE
+ *   - absence rule, present=false               → fired true, evidence ABSENCE,
+ *       needsReview true (T16: nothing to verify it against — see below)
  *   - absence rule, present=true with a quote   → fired false, quote verified
  *   - present=true, quote NOT in the text       → fired false, checked false
  *   - present=true, quote in the text           → fired true, checked true,
@@ -242,16 +251,26 @@ export function keepVerifiedFindings(
 
     const candidate = item as Record<string, unknown>;
     const present = candidate.present;
-    const quote = typeof candidate.quote === "string" ? candidate.quote : "";
+    const rawQuote = typeof candidate.quote === "string" ? candidate.quote : "";
+    // T16: a planted instruction is in the document, so quoting it passes
+    // isVerbatim. It is still not evidence of anything — treat it as no quote,
+    // which leaves the rule unverified rather than fired.
+    const quote = looksLikeInjection(rawQuote) ? "" : rawQuote;
 
     if (absenceRule) {
       if (present === false) {
+        // T16: a present=false answer cannot be checked by quote — there is
+        // nothing to quote — so it is the one finding a planted "this clause is
+        // missing" instruction could produce unopposed. It is kept, but held
+        // for a human: score.ts leaves it out of the grade and the public
+        // serializers leave it out of the advisory until it is reviewed.
         return {
           code: rule.code,
           fired: true,
           evidence: "ABSENCE",
           checked: true,
           filename: null,
+          needsReview: true,
         };
       }
 

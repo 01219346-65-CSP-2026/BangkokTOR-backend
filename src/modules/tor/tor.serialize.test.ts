@@ -358,3 +358,31 @@ describe("serializeDetail — extracted PDF links", () => {
     expect(doc!.url).toBe(EGP_ZIP);
   });
 });
+
+describe("T16 — findings held for review", () => {
+  const held = () =>
+    tor({
+      ruleFindings: [
+        { code: "PENALTY", fired: true, weight: 3, phase: "fairness", evidence: "ค่าปรับวันละ", checked: true },
+        { code: "NOENTITY", fired: true, weight: 3, phase: "legitimacy", evidence: "ABSENCE", checked: true, needsReview: true },
+      ],
+    });
+
+  test("are not public signals", () => {
+    const out = serialize(held());
+    expect(out.signalCount).toBe(1);
+    expect(out.signals.map((s) => s.id)).toEqual(["penalty"]);
+  });
+
+  test("are not in the signed-in advisory", () => {
+    const out = serializeAdvisory(held());
+    expect(out.patternCount).toBe(1);
+    expect(JSON.stringify(out)).not.toContain("NOENTITY");
+  });
+
+  test("are visible, flagged, on the admin grade route", () => {
+    const out = serializeGrade(held());
+    expect(out.findings.find((f) => f.code === "NOENTITY")?.needsReview).toBe(true);
+    expect(out.findings.find((f) => f.code === "PENALTY")?.needsReview).toBe(false);
+  });
+});

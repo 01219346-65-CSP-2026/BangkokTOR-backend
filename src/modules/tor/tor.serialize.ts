@@ -152,7 +152,8 @@ export function serialize(tor: TorLean): PublicTor {
     ...rest
   } = tor as TorLean & Record<string, unknown>;
 
-  const fired = (ruleFindings ?? []).filter((f) => f.fired);
+  // T16: a finding held for review is not published until an admin resolves it.
+  const fired = (ruleFindings ?? []).filter((f) => f.fired && !f.needsReview);
 
   return {
     ...(rest as Omit<PublicTor, "id" | "signalCount" | "signals" | "requiredSkills" | "biddingStatus" | "stage">),
@@ -262,7 +263,8 @@ const ADVISORY_PHASES: RulePhase[] = ["legitimacy", "fairness"];
  */
 export function serializeAdvisory(tor: TorLean): PublicTorAdvisory {
   const known = (tor.ruleFindings ?? []).flatMap((finding) => {
-    const rule = finding.fired ? ruleByCode(finding.code ?? "") : undefined;
+    // T16: held findings stay out of the advisory until reviewed.
+    const rule = finding.fired && !finding.needsReview ? ruleByCode(finding.code ?? "") : undefined;
     return rule ? [{ rule, finding }] : [];
   });
 
@@ -303,6 +305,7 @@ export function serializeGrade(tor: TorLean) {
       checked: f.checked,
       evidence: f.evidence,
       filename: f.filename ?? null,
+      needsReview: f.needsReview ?? false,
     })),
   };
 }
