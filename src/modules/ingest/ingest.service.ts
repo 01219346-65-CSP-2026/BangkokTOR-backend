@@ -18,6 +18,7 @@ import { classifyRaw, isSoftwareCandidate, scopeOf, type Classified } from "./sc
 import { WatermarkModel } from "./watermark.model.ts";
 import type { CaptureInput } from "./ingest.validation.ts";
 import { egpListingUrl } from "../../lib/sources/ckan/normalize.ts";
+import { isValidZipId } from "../../lib/sources/ckan/documents.ts";
 import { procurementFields } from "../../lib/sources/egp/procurement.ts";
 import { COL } from "../../lib/sources/ckan/columns.ts";
 
@@ -522,6 +523,21 @@ export async function processRow(
   await mkdir(env.blobDir, { recursive: true });
 
   for (const doc of docs) {
+    if (doc.externalId !== undefined && !isValidZipId(doc.externalId)) {
+      await recordError({
+        sourceId: SOURCE_ID,
+        projectId: row.projectId,
+        kind: "invalid-zip-id",
+        message: "e-GP returned a malformed ZIP identifier; expected 32 hexadecimal characters",
+        url: doc.url,
+      });
+      await TorModel.updateOne(
+        { _id: tor._id },
+        { $set: { status: "extraction_incomplete", statusReason: "invalid-zip-id" } },
+      );
+      return { ok: false, reason: "invalid-zip-id" };
+    }
+
     const dest = join(env.blobDir, `${doc.externalId ?? doc.projectId}.zip`);
 
     let outcome: FetchOutcome;
