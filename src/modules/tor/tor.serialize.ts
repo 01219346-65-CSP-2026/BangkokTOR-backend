@@ -198,7 +198,7 @@ export function serialize(tor: TorLean): PublicTor {
   }
 
   // T16: a finding held for review is not published until an admin resolves it.
-  const fired = (ruleFindings ?? []).filter((f) => f.fired && !f.needsReview);
+  const fired = (tor.ruleFindings ?? []).filter((f) => f.fired && !f.needsReview);
 
   return {
     ...(picked as Pick<TorLean, PublicTorField>),
