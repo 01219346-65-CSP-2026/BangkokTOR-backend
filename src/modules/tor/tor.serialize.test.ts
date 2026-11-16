@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { Types } from "mongoose";
-import { publicSourceUrl, serialize, serializeAdvisory, serializeDetail, serializeGrade } from "./tor.serialize.ts";
+import { PUBLIC_TOR_FIELDS, publicSourceUrl, serialize, serializeAdvisory, serializeDetail, serializeGrade } from "./tor.serialize.ts";
 import type { TorLean } from "./tor.model.ts";
 
 function tor(overrides: Record<string, unknown> = {}): TorLean {
@@ -77,6 +77,36 @@ describe("serialize — the FR-19 gate", () => {
     const out = serialize(t) as Record<string, unknown>;
     expect(out.id).toBe(String(t._id));
     expect(out._id).toBeUndefined();
+  });
+
+  test("an arbitrary new field on a TOR does not reach the public shape (T09)", () => {
+    // The gate is an allowlist: a field added to the schema tomorrow is
+    // private until someone names it in PUBLIC_TOR_FIELDS.
+    const out = serialize(
+      tor({ redFlagVerdict: "rigged tender", internalNote: "กรมนี้ทุจริต", __v: 3 }),
+    ) as Record<string, unknown>;
+
+    expect(out.redFlagVerdict).toBeUndefined();
+    expect(out.internalNote).toBeUndefined();
+    expect(out.__v).toBeUndefined();
+    const json = JSON.stringify(out);
+    expect(json).not.toContain("rigged");
+    expect(json).not.toContain("ทุจริต");
+  });
+
+  test("emits only allowlisted fields plus the derived public ones", () => {
+    const derived = ["id", "biddingStatus", "stage", "sourceUrl", "requiredSkills", "signalCount", "signals"];
+    const allowed = new Set<string>([...PUBLIC_TOR_FIELDS, ...derived]);
+    const out = serialize(tor({ summaryBullets: [{ text: "x" }], skillTaggerVersion: 1, somethingNew: 1 }));
+    for (const key of Object.keys(out)) expect(allowed.has(key)).toBe(true);
+  });
+
+  test("allowlisted fields are copied through unchanged", () => {
+    const out = serialize(tor({ budget: 1_500_000, province: "กรุงเทพมหานคร" }));
+    expect(out.projectName).toBe("จ้างพัฒนาระบบสารสนเทศ");
+    expect(out.agency).toBe("กรมการปกครอง");
+    expect(out.budget).toBe(1_500_000);
+    expect(out.province).toBe("กรุงเทพมหานคร");
   });
 
   test("a finding for an unknown rule code is dropped, not rendered", () => {
