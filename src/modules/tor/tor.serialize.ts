@@ -23,24 +23,78 @@ import type { SummarySection } from "../../lib/ai/types.ts";
 // If you add a field here, ask whether a client could render it as an
 // accusation. If it could, it does not belong in this function.
 
-/** Fields that must never reach a guest response. */
-const PRIVATE_GRADE_FIELDS = [
-  "grade",
-  "gradeScore",
-  "gradePhaseFailed",
-  "ruleFindings",
-  "graderVersion",
-  "graderModel",
-  // Not private, but not raw either. serializeDetail re-publishes these as
-  // `summaryPoints` after screening them and attaching a page citation.
-  // Leaving the stored field in `...rest` shipped the unscreened text straight
-  // past the gate — caught by tor.serialize.test.ts, which is what that test
-  // is for.
-  "summaryBullets",
-  "summarizedAt",
-  "summaryVersion",
-  "summaryModel",
-] as const;
+/**
+ * The ONLY TorLean fields a guest response copies verbatim (T09, FR-19).
+ *
+ * An allowlist, not a denylist: a field added to the schema is private until
+ * someone names it here. The old shape stripped a list of grade fields and
+ * spread the remainder, so every new field shipped publicly by default — one raw
+ * grade letter or red-flag quote away from accusing an agency.
+ *
+ * Deliberately absent: grade, gradeScore, gradePhaseFailed, ruleFindings,
+ * graderVersion, graderModel (the grade — serializeGrade, admin only);
+ * summaryBullets and summary* bookkeeping (re-published as screened
+ * `summaryPoints` by serializeDetail); requiredSkills (re-shaped below) and
+ * skillTaggerVersion; _id (becomes `id`).
+ *
+ * Before adding a field, ask whether a client could render it as an
+ * accusation. If it could, it does not belong here.
+ */
+export const PUBLIC_TOR_FIELDS = [
+  "sourceId",
+  "projectId",
+  "projectName",
+  "agency",
+  "department",
+  "budget",
+  "averageBudget",
+  "procurementMethod",
+  "procurementType",
+  "goodsCategory",
+  "projectStatus",
+  "fiscalYear",
+  "announcedAt",
+  "province",
+  "district",
+  "subdistrict",
+  "location",
+  "winnerName",
+  "winnerTaxId",
+  "contractNumber",
+  "contractSignedAt",
+  "contractEndsAt",
+  "bmaProjectId",
+  "trackBidding",
+  "biddingStage",
+  "stageFlowName",
+  "stageCheckedAt",
+  "bidOpensAt",
+  "bidClosesAt",
+  "deadlineEvidence",
+  "category",
+  "contractType",
+  "methodId",
+  "statusId",
+  "isSoftware",
+  "softwareScore",
+  "softwareConfidence",
+  "softwareSignals",
+  "workTypes",
+  "workTypeSignals",
+  "classifiedAt",
+  "classifierVersion",
+  "legitimacySignals",
+  "legitimacyCheckedAt",
+  "gradedAt",
+  "skillsTaggedAt",
+  "status",
+  "statusReason",
+  "fetchedAt",
+  "createdAt",
+  "updatedAt",
+] as const satisfies readonly (keyof TorLean)[];
+
+type PublicTorField = (typeof PUBLIC_TOR_FIELDS)[number];
 
 export type PublicSignal = {
   id: string;
@@ -67,11 +121,9 @@ function toSignal(code: string): PublicSignal | null {
 /** A skill the TOR asks for, with the quote it was found in. */
 export type PublicRequiredSkill = { slug: string; evidence: string };
 
-export type PublicTor = Omit<
-  TorLean,
-  (typeof PRIVATE_GRADE_FIELDS)[number] | "_id" | "__v" | "requiredSkills" | "skillTaggerVersion"
-> & {
+export type PublicTor = Pick<TorLean, PublicTorField> & {
   id: string;
+  sourceUrl: string;
   signalCount: number;
   signals: PublicSignal[];
   requiredSkills: PublicRequiredSkill[];
@@ -133,35 +185,28 @@ export function publicSourceUrl(tor: Pick<TorLean, "sourceId" | "projectId" | "s
   return tor.sourceUrl ?? "";
 }
 
-/** Guest/public shape. Strips the grade entirely and emits neutral signals. */
+/** Guest/public shape. Copies only PUBLIC_TOR_FIELDS, never the grade, and
+ *  emits neutral signals in its place. */
 export function serialize(tor: TorLean): PublicTor {
-  const {
-    _id,
-    grade: _grade,
-    gradeScore: _gradeScore,
-    gradePhaseFailed: _phase,
-    ruleFindings,
-    graderVersion: _gv,
-    graderModel: _gm,
-    summaryBullets: _bullets,
-    summarizedAt: _summarizedAt,
-    summaryVersion: _sv,
-    summaryModel: _sm,
-    requiredSkills,
-    skillTaggerVersion: _stv,
-    ...rest
-  } = tor as TorLean & Record<string, unknown>;
+  const picked: Partial<Pick<TorLean, PublicTorField>> = {};
+  for (const field of PUBLIC_TOR_FIELDS) {
+    // Skip absent keys rather than writing `undefined`, so a projected row
+    // serializes the same shape the spread used to produce.
+    if (Object.hasOwn(tor, field)) {
+      (picked as Record<string, unknown>)[field] = tor[field];
+    }
+  }
 
   // T16: a finding held for review is not published until an admin resolves it.
   const fired = (ruleFindings ?? []).filter((f) => f.fired && !f.needsReview);
 
   return {
-    ...(rest as Omit<PublicTor, "id" | "signalCount" | "signals" | "requiredSkills" | "biddingStatus" | "stage">),
-    id: String(_id),
+    ...(picked as Pick<TorLean, PublicTorField>),
+    id: String(tor._id),
     biddingStatus: biddingStatus(tor),
     stage: procurementStage(tor),
     sourceUrl: publicSourceUrl(tor),
-    requiredSkills: (requiredSkills ?? []).map((s) => ({ slug: s.slug, evidence: s.evidence ?? "" })),
+    requiredSkills: (tor.requiredSkills ?? []).map((s) => ({ slug: s.slug, evidence: s.evidence ?? "" })),
     signalCount: fired.length,
     signals: fired
       .map((f) => toSignal(f.code ?? ""))

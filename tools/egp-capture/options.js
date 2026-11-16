@@ -1,8 +1,8 @@
 const $ = (id) => document.getElementById(id);
 
-chrome.storage.local.get(["backendUrl", "adminToken"]).then(({ backendUrl, adminToken }) => {
+chrome.storage.local.get(["backendUrl", "captureToken"]).then(({ backendUrl, captureToken }) => {
   $("backendUrl").value = backendUrl ?? "http://localhost:8003";
-  $("adminToken").value = adminToken ?? "";
+  $("captureToken").value = captureToken ?? "";
 });
 
 $("save").addEventListener("click", async () => {
@@ -25,7 +25,7 @@ $("save").addEventListener("click", async () => {
     }
   }
 
-  await chrome.storage.local.set({ backendUrl, adminToken: $("adminToken").value });
+  await chrome.storage.local.set({ backendUrl, captureToken: $("captureToken").value });
   $("status").textContent = "Saved";
 });
 

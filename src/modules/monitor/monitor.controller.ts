@@ -9,6 +9,7 @@ import {
   requestStop,
   retryError,
 } from "./monitor.service.ts";
+import { listAuditEntries } from "../audit/audit.service.ts";
 
 // Operational views, plus the three admin-token controls at the bottom. Express 5 forwards a rejected promise to the
 // error handler on its own, so these don't need try/catch.
@@ -55,4 +56,14 @@ export const flushWorkers: RequestHandler = async (_req, res) => {
 
 export const retry: RequestHandler = async (req, res) => {
   res.json(await retryError(String(req.params.id)));
+};
+
+export const audit: RequestHandler = async (req, res) => {
+  res.json(
+    await listAuditEntries({
+      limit: Number(req.query.limit ?? 50) || 50,
+      actorId: req.query.actorId ? String(req.query.actorId) : undefined,
+      action: req.query.action ? String(req.query.action) : undefined,
+    }),
+  );
 };

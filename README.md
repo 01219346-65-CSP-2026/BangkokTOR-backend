@@ -137,8 +137,8 @@ named government agency is an accusation, and this project does not publish
 those.
 
 So the public shape carries neutral observations only — `{id, tone, titleKey,
-bodyKey}`, i18n keys with no prose — and `PRIVATE_GRADE_FIELDS` is stripped from
-every guest response. The full grade lives on its own route behind the admin
+bodyKey}`, i18n keys with no prose — and a guest response copies only the fields
+named in `PUBLIC_TOR_FIELDS`, so a new field is private until it is listed. The full grade lives on its own route behind the admin
 token.
 
 **If you add a field to that serializer, ask whether a client could render it as
@@ -153,6 +153,10 @@ starting expensive pipeline runs or deleting rows.
 `ADMIN_TOKEN` is sent as an `X-Admin-Token` header and guards every 🔒 route
 above. It answers **404, not 403**, so it does not confirm the route exists.
 The server refuses to boot in production without it.
+
+The e-GP capture extension uses the separate `CAPTURE_TOKEN` instead. It is
+accepted only by `POST /api/ingest/capture` and must differ from `ADMIN_TOKEN`,
+so a token stored by the extension cannot authorize other admin routes.
 
 Rate limits are per IP, fixed window, counted in memory:
 

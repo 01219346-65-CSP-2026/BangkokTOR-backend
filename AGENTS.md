@@ -192,7 +192,7 @@ code, and Turnstile is never worked around.** A person runs it in their own brow
 - it reads the responses e-GP returns to that page, and only those (`…/announcement`,
   `…/announcement/csv`);
 - it pulls the 11-digit project ids out of them;
-- it sends them, on one click, to `POST /api/ingest/capture` (admin token, 2,000 per call).
+- it sends them, on one click, to `POST /api/ingest/capture` (capture-only token, 2,000 per call).
 
 It never sends its own e-GP request and never touches `X-Announcement-Token`. See its README.
 
