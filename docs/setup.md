@@ -15,12 +15,27 @@ past the landing page. The frontend has its own `docs/setup.md`.
 
 ```bash
 bun install
-cp .env.example .env            # fill in the values (table below)
+cp .env.example .env            # set a unique MONGO_INITDB_ROOT_PASSWORD
 docker network create bangkoktor-net   # once per machine; compose expects it
 docker compose up -d mongo      # mongo:7 on 127.0.0.1:27017
+                                # authenticated using the .env credentials
+# For bun run dev on the host, set MONGODB_URI to the authenticated localhost URI below
 bun run dev                     # API on http://localhost:8003, restarts on save
 curl localhost:8003/health/ready   # {"status":"ok", ... "mongo":{"ok":true}}
 ```
+
+For host-based development, set `MONGODB_URI` to
+`mongodb://<MONGO_INITDB_ROOT_USERNAME>:<MONGO_INITDB_ROOT_PASSWORD>@localhost:27017/bangkoktor?authSource=admin`.
+When the backend runs through Docker Compose, leave `MONGODB_URI` empty; Compose
+uses the authenticated `mongo` service address. The Compose file also starts
+Mongo in production, so the deployment `.env` must define both
+`MONGO_INITDB_ROOT_USERNAME` and `MONGO_INITDB_ROOT_PASSWORD`, even when the
+backend uses Atlas.
+
+Mongo's initialization credentials are only applied to an empty data volume.
+For an existing volume created before authentication was enabled, back up the
+data and create a database user before connecting with credentials. Do not
+delete the `mongo-data` volume unless its contents can be discarded.
 
 The database starts empty. To pull real TORs, run `bun run discover`, then
 `bun run worker`.
@@ -52,8 +67,9 @@ All variables are read in `src/config/env.ts`, which also holds the defaults.
 
 | Variable | Needed for | Notes |
 |---|---|---|
-| `MONGODB_URI` | Boot | The only variable required to start |
+| `MONGODB_URI` | Host-run API | Authenticated localhost URI for local development; set to Atlas in production |
 | `MONGODB_DB_NAME` | — | Default `bangkoktor` |
+| `MONGO_INITDB_ROOT_USERNAME`, `MONGO_INITDB_ROOT_PASSWORD` | Local Compose Mongo | Required; use a unique local password (`openssl rand -hex 32`) |
 | `PORT`, `NODE_ENV` | — | Default 8003 |
 | `CORS_ORIGINS` | Browser calls | Default `http://localhost:3003` |
 | `ADMIN_TOKEN` | Admin routes | **Must match the frontend.** Required in production; admin routes are open in dev if unset |

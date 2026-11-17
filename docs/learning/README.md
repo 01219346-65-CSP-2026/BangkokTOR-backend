@@ -62,18 +62,22 @@ You need three things on your machine: **Bun**, **Docker**, and the repo.
    ```sh
    bun install
    ```
-4. **Start a local database.** It runs in Docker and only listens on your own machine:
-   ```sh
-   docker compose up -d mongo
-   ```
-5. **Create your `.env` file** (your private settings, never committed):
+4. **Create your `.env` file** (your private settings, never committed):
    ```sh
    cp .env.example .env
    ```
-   Then open `.env` and check these lines:
+   Set a unique `MONGO_INITDB_ROOT_PASSWORD` and then set the host-run
+   `MONGODB_URI` and `DATAGOTH_KEY`:
    ```sh
-   MONGODB_URI=mongodb://localhost:27017   # your LOCAL database. Don't point this at the shared Atlas cluster while learning.
+   MONGO_INITDB_ROOT_USERNAME=bangkoktor-local
+   MONGO_INITDB_ROOT_PASSWORD=...           # generate with: openssl rand -hex 32
+   MONGODB_URI=mongodb://bangkoktor-local:<password>@localhost:27017/bangkoktor?authSource=admin
+                                            # local database; don't use shared Atlas while learning
    DATAGOTH_KEY=...                        # ask the team; needed only to download new tenders
+   ```
+5. **Start the local database.** It runs in Docker and only listens on your own machine:
+   ```sh
+   docker compose up -d mongo
    ```
    From branch 91 onwards you also need:
    ```sh
@@ -114,7 +118,10 @@ curl http://localhost:8003/health            # {"ok":true}
 curl http://localhost:8003/api/extract/status
 ```
 
-To look inside the database, install **MongoDB Compass** (a free app), connect to `mongodb://localhost:27017`, and open the `bangkoktor` database. You'll see the collections `tors`, `documents`, `tor_texts`, and so on.
+To look inside the database, install **MongoDB Compass** (a free app), connect
+with `mongodb://bangkoktor-local:<password>@localhost:27017/bangkoktor?authSource=admin`
+using your `.env` password, and open the `bangkoktor` database. You'll see the
+collections `tors`, `documents`, `tor_texts`, and so on.
 
 ---
 

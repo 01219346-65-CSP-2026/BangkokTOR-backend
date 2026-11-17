@@ -9,10 +9,9 @@ services:
       - "8003"
     environment:
       PORT: 8003
-      # The data lives in Atlas (.env); the local `mongo` service is only the
-      # fallback for a checkout without one. Hard-coding it here served an
-      # empty database in production.
-      MONGODB_URI: ${MONGODB_URI:-mongodb://mongo:27017}
+      # Atlas is used when configured; otherwise connect to the authenticated
+      # local Mongo service.
+      MONGODB_URI: ${MONGODB_URI:-mongodb://${MONGO_INITDB_ROOT_USERNAME:?MONGO_INITDB_ROOT_USERNAME must be set in .env}:${MONGO_INITDB_ROOT_PASSWORD:?MONGO_INITDB_ROOT_PASSWORD must be set in .env}@mongo:27017/${MONGODB_DB_NAME:-bangkoktor}?authSource=admin}
       MONGODB_DB_NAME: ${MONGODB_DB_NAME:-bangkoktor}
       NODE_ENV: production
       ADMIN_TOKEN: ${ADMIN_TOKEN:?ADMIN_TOKEN must be set in .env}
@@ -32,9 +31,11 @@ services:
 
   mongo:
     image: mongo:7
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME:?MONGO_INITDB_ROOT_USERNAME must be set in .env}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD:?MONGO_INITDB_ROOT_PASSWORD must be set in .env}
     ports:
-      # Loopback-only so `bun run dev` on the host can reach it without
-      # exposing the DB on the deploy server's public interface.
+      # Loopback-only for host development; credentials are still required.
       - "127.0.0.1:27017:27017"
     volumes:
       - mongo-data:/data/db
