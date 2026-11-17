@@ -59,13 +59,18 @@ scaffolding examples and are not mounted.
 
 ```sh
 bun install
-cp .env.example .env     # then fill in MONGODB_URI at minimum
+cp .env.example .env     # set a unique MONGO_INITDB_ROOT_PASSWORD
+                         # for host development, also set MONGODB_URI as below
+docker compose up -d mongo
 bun run dev              # API on :8003, watch mode
 ```
 
-Mongo is the only hard requirement — `MONGODB_URI` is the one variable with no
-default, and the server exits at boot without it. `docker compose up -d mongo`
-gives you one on `127.0.0.1:27017`.
+`docker compose up -d mongo` starts an authenticated database on
+`127.0.0.1:27017`. When running the API directly on the host, set `MONGODB_URI`
+to `mongodb://<MONGO_INITDB_ROOT_USERNAME>:<MONGO_INITDB_ROOT_PASSWORD>@localhost:27017/bangkoktor?authSource=admin`.
+When running the backend through Docker Compose, leave `MONGODB_URI` empty so
+Compose uses the internal `mongo` service address. Production should set
+`MONGODB_URI` to its Atlas connection string.
 
 The workers are separate processes and only needed if you are working on the
 pipeline itself:
