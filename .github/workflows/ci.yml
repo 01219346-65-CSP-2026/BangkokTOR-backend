@@ -1,0 +1,106 @@
+name: CI
+
+# Every PR and every push to main runs the checks on GitHub-hosted runners.
+# Only a push to main that passes all of them reaches the deploy job, which runs
+# on the self-hosted runner on the Mac mini. PR code never touches that box:
+# this repo is public, so a fork's PR must not run on a self-hosted runner.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  # Superseded PR runs are cancelled; runs on main always finish, so a deploy
+  # is never cut off halfway.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  BUN_VERSION: 1.3.14
+
+jobs:
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck
+
+  test:
+    runs-on: ubuntu-latest
+    # rateLimit.test.ts needs a real Mongo: the limiter's counter is shared
+    # across processes, which a fake cannot prove.
+    services:
+      mongo:
+        image: mongo:7
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.adminCommand(\"ping\")'"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      MONGODB_URI: mongodb://localhost:27017
+      MONGODB_DB_NAME: bangkoktor_ci
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - run: bun install --frozen-lockfile
+      - run: bun test
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Bun runs the TypeScript directly, so "build" means the production image.
+      - run: docker build --tag bangkoktor-backend:ci .
+
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - run: bun install --frozen-lockfile
+      # Fails on high or critical. Moderate and low are printed, not fatal.
+      - run: bun audit --audit-level=high
+
+  deploy:
+    needs: [typecheck, test, build, audit]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: self-hosted
+    concurrency:
+      group: deploy-backend
+      cancel-in-progress: false
+    env:
+      PROD_DIR: /Users/munyinsam/Prod/csp/BangkokTOR-backend
+    steps:
+      - name: Pull latest in prod checkout
+        run: git -C "$PROD_DIR" pull --ff-only
+
+      # --wait blocks until every service is healthy (backend has a /health
+      # HEALTHCHECK, mongo a ping), so a container that crash-loops fails the job.
+      - name: Docker compose up
+        working-directory: ${{ env.PROD_DIR }}
+        run: docker compose up -d --build --wait --wait-timeout 180
+
+      - name: Show running services
+        if: always()
+        working-directory: ${{ env.PROD_DIR }}
+        run: docker compose ps
+
+      - name: Prune dangling images
+        run: docker image prune -f

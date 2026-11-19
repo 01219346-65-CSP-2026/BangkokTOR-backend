@@ -197,8 +197,10 @@ First-time setup needs the shared network, which compose will not create:
 docker network create bangkoktor-net
 ```
 
-A push to `main` triggers a self-hosted runner that pulls into
-`~/Prod/csp/<repo>` and runs `docker compose up -d --build`. Because the deploy
+Every PR and push runs CI (lint/typecheck, tests, build, audit) on
+GitHub-hosted runners. A push to `main` that passes all of them then triggers a
+self-hosted runner that pulls into `~/Prod/csp/<repo>` and runs
+`docker compose up -d --build --wait`. See `docs/deployment.md` → CI. Because the deploy
 is a `git pull --ff-only`, **never edit files directly in the prod checkout** —
 an uncommitted change there aborts every subsequent deploy.
 
