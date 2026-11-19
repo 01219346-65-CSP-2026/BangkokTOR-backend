@@ -1,6 +1,7 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import type { Request, RequestHandler, Response } from "express";
 import { env } from "../config/env.ts";
+import { connectMongo, disconnectMongo } from "../db/mongo.ts";
 import { HttpError } from "./errors.ts";
 import {
   pipelineLimit,
@@ -19,7 +20,20 @@ const tiers: { name: string; limiter: RequestHandler; max: number }[] = [
   { name: "profile", limiter: profileLimit, max: env.rateLimitProfileMax },
 ];
 
-function invoke(limiter: RequestHandler): unknown {
+// The limiter's counter lives in Mongo (shared across processes), so these
+// tests need a real connection, like rateLimit.test.ts. Locally: point
+// MONGODB_URI at a throwaway database, never production — resetRateLimits()
+// empties the collection.
+beforeAll(async () => {
+  await connectMongo();
+});
+
+afterAll(async () => {
+  await disconnectMongo();
+});
+
+/** Runs the async limiter to completion and returns what it passed to next(). */
+async function invoke(limiter: RequestHandler): Promise<unknown> {
   let nextError: unknown;
   const req = {
     headers: { "x-forwarded-for": "192.0.2.1" },
@@ -32,7 +46,7 @@ function invoke(limiter: RequestHandler): unknown {
     },
   } as unknown as Response;
 
-  limiter(req, res, (error?: unknown) => {
+  await limiter(req, res, (error?: unknown) => {
     nextError = error;
   });
   return nextError;
@@ -41,14 +55,14 @@ function invoke(limiter: RequestHandler): unknown {
 describe("inbound rate-limit tiers", () => {
   // Verify each configured tier allows its full budget, then rejects one extra request.
   for (const { name, limiter, max } of tiers) {
-    test(`${name} tier allows ${max} requests and rejects the next`, () => {
-      resetRateLimits();
+    test(`${name} tier allows ${max} requests and rejects the next`, async () => {
+      await resetRateLimits();
 
       for (let request = 0; request < max; request += 1) {
-        expect(invoke(limiter)).toBeUndefined();
+        expect(await invoke(limiter)).toBeUndefined();
       }
 
-      const error = invoke(limiter);
+      const error = await invoke(limiter);
       expect(error).toBeInstanceOf(HttpError);
       expect(error).toMatchObject({ status: 429 });
     });
