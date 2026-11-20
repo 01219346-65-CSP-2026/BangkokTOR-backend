@@ -44,9 +44,11 @@ describe("feat/91 checklist", () => {
     expect(service).toContain("fullText");
   });
 
-  test("step 9: GRADER_VERSION is 2, so every old grade gets redone", async () => {
+  // At least 2, not exactly 2: the version is bumped again on every later
+  // prompt or weight change (2.3 after T16), and each bump is correct.
+  test("step 9: GRADER_VERSION is at least 2, so every old grade gets redone", async () => {
     const { GRADER_VERSION } = await load("src/modules/tor/tor.model.ts");
-    expect(GRADER_VERSION).toBe(2);
+    expect(GRADER_VERSION).toBeGreaterThanOrEqual(2);
   });
 
   test("step 9: a stored finding records its filename", async () => {

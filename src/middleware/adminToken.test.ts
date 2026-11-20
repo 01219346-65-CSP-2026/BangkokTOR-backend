@@ -1,26 +1,28 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import type { Request, Response } from "express";
 
-const originalAdminToken = process.env.ADMIN_TOKEN;
-const originalCaptureToken = process.env.CAPTURE_TOKEN;
-process.env.ADMIN_TOKEN = "admin-token-test";
-process.env.CAPTURE_TOKEN = "capture-token-test";
+import { env } from "../config/env.ts";
+import { requireAdminToken } from "./adminToken.ts";
+import { HttpError } from "./errors.ts";
 
-const [{ requireAdminToken }, { HttpError }] = await Promise.all([
-  import("./adminToken.ts"),
-  import("./errors.ts"),
-]);
+// env is a plain object, read from process.env ONCE, when the first module
+// imports config/env.ts. In a full `bun test` run that is some earlier test
+// file, so setting process.env here (as this file used to) changed nothing and
+// the tests saw the real .env token, or none at all in CI. Set the values on
+// env itself, for exactly the span of this file.
+// env is typed readonly for application code; only this test writes to it.
+const testEnv = env as { -readonly [K in keyof typeof env]: (typeof env)[K] };
+const original = { adminToken: env.adminToken, captureToken: env.captureToken };
 
-if (originalAdminToken === undefined) {
-  delete process.env.ADMIN_TOKEN;
-} else {
-  process.env.ADMIN_TOKEN = originalAdminToken;
-}
-if (originalCaptureToken === undefined) {
-  delete process.env.CAPTURE_TOKEN;
-} else {
-  process.env.CAPTURE_TOKEN = originalCaptureToken;
-}
+beforeAll(() => {
+  testEnv.adminToken = "admin-token-test";
+  testEnv.captureToken = "capture-token-test";
+});
+
+afterAll(() => {
+  testEnv.adminToken = original.adminToken;
+  testEnv.captureToken = original.captureToken;
+});
 
 function invoke(
   token: string,
@@ -39,7 +41,11 @@ function invoke(
     headers: { "x-admin-token": token },
   } as unknown as Request;
 
-  requireAdminToken(req, {} as Response, (error?: unknown) => calls.push(error));
+  // The middleware records which credential passed (res.locals.tokenIdentity)
+  // for the audit log, so the response needs a locals bag.
+  requireAdminToken(req, { locals: {} } as unknown as Response, (error?: unknown) =>
+    calls.push(error),
+  );
   return calls;
 }
 
